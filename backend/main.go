@@ -6,7 +6,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 )
 
@@ -39,12 +41,19 @@ func main() {
 	// 在後台運行 Hub
 	go hub.run()
 
+	game := newGame()
+	go game.run(60, hub)
+
 	// 註冊路由處理函數
 	http.HandleFunc("/", serveHome) // 處理首頁請求
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r) // 處理 WebSocket 連接請求
+		player := newPlayer(rand.Intn(100000000))
+		game.addPlayer(player)
+		log.Println("new player", player.ID)
 	})
 
+	fmt.Println("Server is running on port", *addr)
 	// 啟動 HTTP 服務器
 	err := http.ListenAndServe(*addr, nil)
 	if err != nil {
