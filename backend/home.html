@@ -23,24 +23,24 @@ window.onload = function () {
         player.Health = Math.max(player.Health, 0);
         ctx.fillStyle = player.Health > 50 ? 'green' : 'red';
 
-        ctx.fillRect(player.X, player.Y, player.Width, player.Height);
+        ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2, player.Width, player.Height);
         
         // 繪製血量條
         ctx.fillStyle = 'black';
-        ctx.fillRect(player.X, player.Y - 10, player.Width, 5);
+        ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2 - 10, player.Width, 5);
         ctx.fillStyle = 'red';
-        ctx.fillRect(player.X, player.Y - 10, (player.Health / 100) * player.Width, 5);
+        ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2 - 10, (player.Health / 100) * player.Width, 5);
         
         // 繪製玩家ID
         ctx.fillStyle = 'white';
         ctx.font = '12px Arial';
-        ctx.fillText('Player ' + player.ID, player.X, player.Y - 15);
+        ctx.fillText('Player ' + player.ID, player.X - player.Width / 2, player.Y - player.Height / 2 - 15);
     }
     
     // 繪製武器
     function drawWeapon(weapon) {
         ctx.fillStyle = 'yellow';
-        ctx.fillRect(weapon.X, weapon.Y, weapon.Width, weapon.Height);
+        ctx.fillRect(weapon.X - weapon.Width / 2, weapon.Y - weapon.Height / 2, weapon.Width, weapon.Height);
     }
     
     // 繪製遊戲畫面

@@ -13,7 +13,7 @@ type Game struct {
 
 type Player struct {
 	ID                  int
-	X, Y                float64 // 玩家中心或左上角的座標
+	X, Y                float64 // 玩家中心
 	Width               float64
 	Height              float64
 	Health              int
@@ -27,7 +27,7 @@ type Player struct {
 
 type Weapon struct {
 	OwnerID       int     // 所屬玩家ID
-	X, Y          float64 // 武器目前的位置（根據循環運動動態更新）
+	X, Y          float64 // 武器目前的中心
 	Width         float64
 	Height        float64
 	RotationAngle float64 // 武器旋轉的角度
@@ -35,145 +35,151 @@ type Weapon struct {
 }
 
 func RectCollision(x1, y1, w1, h1, x2, y2, w2, h2 float64) bool {
-	// 簡單的矩形碰撞檢測（不考慮旋轉）
+	// Adjust coordinates to top-left corner
+	x1 -= w1 / 2
+	y1 -= h1 / 2
+	x2 -= w2 / 2
+	y2 -= h2 / 2
+
+	// Simple rectangle collision detection (ignoring rotation)
 	if x1 > x2+w2 || x1+w1 < x2 || y1 > y2+h2 || y1+h1 < y2 {
 		return false
 	}
 	return true
 }
 
-// 考慮旋轉的碰撞檢測
-func RotatedRectCollision(x1, y1, w1, h1, angle1, x2, y2, w2, h2, angle2 float64) bool {
-	// 如果兩個矩形都沒有旋轉，使用簡單的矩形碰撞檢測
-	if angle1 == 0 && angle2 == 0 {
-		return RectCollision(x1, y1, w1, h1, x2, y2, w2, h2)
-	}
+// // 考慮旋轉的碰撞檢測
+// func RotatedRectCollision(x1, y1, w1, h1, angle1, x2, y2, w2, h2, angle2 float64) bool {
+// 	// 如果兩個矩形都沒有旋轉，使用簡單的矩形碰撞檢測
+// 	if angle1 == 0 && angle2 == 0 {
+// 		return RectCollision(x1, y1, w1, h1, x2, y2, w2, h2)
+// 	}
 
-	// 計算第一個矩形的四個角點
-	corners1 := calculateCorners(x1, y1, w1, h1, angle1)
+// 	// 計算第一個矩形的四個角點
+// 	corners1 := calculateCorners(x1, y1, w1, h1, angle1)
 
-	// 計算第二個矩形的四個角點
-	corners2 := calculateCorners(x2, y2, w2, h2, angle2)
+// 	// 計算第二個矩形的四個角點
+// 	corners2 := calculateCorners(x2, y2, w2, h2, angle2)
 
-	// 使用分離軸定理(SAT)檢測兩個旋轉矩形是否碰撞
-	return checkSATCollision(corners1, corners2)
-}
+// 	// 使用分離軸定理(SAT)檢測兩個旋轉矩形是否碰撞
+// 	return checkSATCollision(corners1, corners2)
+// }
 
-// 計算旋轉後矩形的四個角點
-func calculateCorners(x, y, width, height, angle float64) [][2]float64 {
-	// 矩形中心點
-	centerX := x + width/2
-	centerY := y + height/2
+// // 計算旋轉後矩形的四個角點
+// func calculateCorners(x, y, width, height, angle float64) [][2]float64 {
+// 	// 矩形中心點
+// 	centerX := x + width/2
+// 	centerY := y + height/2
 
-	// 未旋轉時的四個角點（相對於中心點）
-	halfW := width / 2
-	halfH := height / 2
-	corners := [][2]float64{
-		{-halfW, -halfH}, // 左上
-		{halfW, -halfH},  // 右上
-		{halfW, halfH},   // 右下
-		{-halfW, halfH},  // 左下
-	}
+// 	// 未旋轉時的四個角點（相對於中心點）
+// 	halfW := width / 2
+// 	halfH := height / 2
+// 	corners := [][2]float64{
+// 		{-halfW, -halfH}, // 左上
+// 		{halfW, -halfH},  // 右上
+// 		{halfW, halfH},   // 右下
+// 		{-halfW, halfH},  // 左下
+// 	}
 
-	// 旋轉並平移每個角點
-	rotatedCorners := make([][2]float64, 4)
-	cos := math.Cos(angle)
-	sin := math.Sin(angle)
+// 	// 旋轉並平移每個角點
+// 	rotatedCorners := make([][2]float64, 4)
+// 	cos := math.Cos(angle)
+// 	sin := math.Sin(angle)
 
-	for i, corner := range corners {
-		// 旋轉
-		rotatedX := corner[0]*cos - corner[1]*sin
-		rotatedY := corner[0]*sin + corner[1]*cos
+// 	for i, corner := range corners {
+// 		// 旋轉
+// 		rotatedX := corner[0]*cos - corner[1]*sin
+// 		rotatedY := corner[0]*sin + corner[1]*cos
 
-		// 平移回絕對座標
-		rotatedCorners[i] = [2]float64{centerX + rotatedX, centerY + rotatedY}
-	}
+// 		// 平移回絕對座標
+// 		rotatedCorners[i] = [2]float64{centerX + rotatedX, centerY + rotatedY}
+// 	}
 
-	return rotatedCorners
-}
+// 	return rotatedCorners
+// }
 
-// 使用分離軸定理檢測碰撞
-func checkSATCollision(corners1, corners2 [][2]float64) bool {
-	// 檢查第一個矩形的邊作為投影軸
-	for i := 0; i < 4; i++ {
-		j := (i + 1) % 4
-		axisX := corners1[j][0] - corners1[i][0]
-		axisY := corners1[j][1] - corners1[i][1]
+// // 使用分離軸定理檢測碰撞
+// func checkSATCollision(corners1, corners2 [][2]float64) bool {
+// 	// 檢查第一個矩形的邊作為投影軸
+// 	for i := 0; i < 4; i++ {
+// 		j := (i + 1) % 4
+// 		axisX := corners1[j][0] - corners1[i][0]
+// 		axisY := corners1[j][1] - corners1[i][1]
 
-		// 法向量（垂直於邊的向量）
-		normalX := -axisY
-		normalY := axisX
+// 		// 法向量（垂直於邊的向量）
+// 		normalX := -axisY
+// 		normalY := axisX
 
-		// 如果在這個軸上有間隙，則沒有碰撞
-		if hasGap(corners1, corners2, normalX, normalY) {
-			return false
-		}
-	}
+// 		// 如果在這個軸上有間隙，則沒有碰撞
+// 		if hasGap(corners1, corners2, normalX, normalY) {
+// 			return false
+// 		}
+// 	}
 
-	// 檢查第二個矩形的邊作為投影軸
-	for i := 0; i < 4; i++ {
-		j := (i + 1) % 4
-		axisX := corners2[j][0] - corners2[i][0]
-		axisY := corners2[j][1] - corners2[i][1]
+// 	// 檢查第二個矩形的邊作為投影軸
+// 	for i := 0; i < 4; i++ {
+// 		j := (i + 1) % 4
+// 		axisX := corners2[j][0] - corners2[i][0]
+// 		axisY := corners2[j][1] - corners2[i][1]
 
-		// 法向量
-		normalX := -axisY
-		normalY := axisX
+// 		// 法向量
+// 		normalX := -axisY
+// 		normalY := axisX
 
-		// 如果在這個軸上有間隙，則沒有碰撞
-		if hasGap(corners1, corners2, normalX, normalY) {
-			return false
-		}
-	}
+// 		// 如果在這個軸上有間隙，則沒有碰撞
+// 		if hasGap(corners1, corners2, normalX, normalY) {
+// 			return false
+// 		}
+// 	}
 
-	// 所有軸都沒有間隙，表示有碰撞
-	return true
-}
+// 	// 所有軸都沒有間隙，表示有碰撞
+// 	return true
+// }
 
-// 檢查在給定軸上是否有間隙
-func hasGap(corners1, corners2 [][2]float64, axisX, axisY float64) bool {
-	// 標準化軸向量
-	length := math.Sqrt(axisX*axisX + axisY*axisY)
-	if length > 0 {
-		axisX /= length
-		axisY /= length
-	}
+// // 檢查在給定軸上是否有間隙
+// func hasGap(corners1, corners2 [][2]float64, axisX, axisY float64) bool {
+// 	// 標準化軸向量
+// 	length := math.Sqrt(axisX*axisX + axisY*axisY)
+// 	if length > 0 {
+// 		axisX /= length
+// 		axisY /= length
+// 	}
 
-	// 計算第一個矩形在軸上的投影
-	min1, max1 := projectCorners(corners1, axisX, axisY)
+// 	// 計算第一個矩形在軸上的投影
+// 	min1, max1 := projectCorners(corners1, axisX, axisY)
 
-	// 計算第二個矩形在軸上的投影
-	min2, max2 := projectCorners(corners2, axisX, axisY)
+// 	// 計算第二個矩形在軸上的投影
+// 	min2, max2 := projectCorners(corners2, axisX, axisY)
 
-	// 檢查投影是否有間隙
-	return max1 < min2 || max2 < min1
-}
+// 	// 檢查投影是否有間隙
+// 	return max1 < min2 || max2 < min1
+// }
 
-// 將角點投影到軸上並返回最小和最大值
-func projectCorners(corners [][2]float64, axisX, axisY float64) (float64, float64) {
-	min := math.Inf(1)
-	max := math.Inf(-1)
+// // 將角點投影到軸上並返回最小和最大值
+// func projectCorners(corners [][2]float64, axisX, axisY float64) (float64, float64) {
+// 	min := math.Inf(1)
+// 	max := math.Inf(-1)
 
-	for _, corner := range corners {
-		// 點積計算投影值
-		projection := corner[0]*axisX + corner[1]*axisY
+// 	for _, corner := range corners {
+// 		// 點積計算投影值
+// 		projection := corner[0]*axisX + corner[1]*axisY
 
-		if projection < min {
-			min = projection
-		}
-		if projection > max {
-			max = projection
-		}
-	}
+// 		if projection < min {
+// 			min = projection
+// 		}
+// 		if projection > max {
+// 			max = projection
+// 		}
+// 	}
 
-	return min, max
-}
+// 	return min, max
+// }
 
 func updateWeaponPosition(p *Player, w *Weapon, angle float64, radius float64) {
 	// Only update weapon position if it belongs to the player
 	if w.OwnerID == p.ID {
-		w.X = p.X + math.Cos(angle)*radius - w.Width/2
-		w.Y = p.Y + math.Sin(angle)*radius - w.Height/2
+		w.X = p.X + math.Cos(angle)*radius
+		w.Y = p.Y + math.Sin(angle)*radius
 	}
 }
 
