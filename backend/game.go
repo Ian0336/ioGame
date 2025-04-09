@@ -17,7 +17,7 @@ type Player struct {
 	Width               float64
 	Height              float64
 	Health              int
-	Angle               float64
+	Direction           float64
 	Speed               float64
 	WeaponRotationAngle float64 // 武器旋轉的基準角度
 	// 玩家擁有的武器列表
@@ -66,7 +66,7 @@ func RectCollision(x1, y1, w1, h1, x2, y2, w2, h2 float64) bool {
 // }
 
 // // 計算旋轉後矩形的四個角點
-// func calculateCorners(x, y, width, height, angle float64) [][2]float64 {
+// func calculateCorners(x, y, width, height, direction float64) [][2]float64 {
 // 	// 矩形中心點
 // 	centerX := x + width/2
 // 	centerY := y + height/2
@@ -83,8 +83,8 @@ func RectCollision(x1, y1, w1, h1, x2, y2, w2, h2 float64) bool {
 
 // 	// 旋轉並平移每個角點
 // 	rotatedCorners := make([][2]float64, 4)
-// 	cos := math.Cos(angle)
-// 	sin := math.Sin(angle)
+// 	cos := math.Cos(direction)
+// 	sin := math.Sin(direction)
 
 // 	for i, corner := range corners {
 // 		// 旋轉
@@ -175,17 +175,17 @@ func RectCollision(x1, y1, w1, h1, x2, y2, w2, h2 float64) bool {
 // 	return min, max
 // }
 
-func updateWeaponPosition(p *Player, w *Weapon, angle float64, radius float64) {
+func updateWeaponPosition(p *Player, w *Weapon, direction float64, radius float64) {
 	// Only update weapon position if it belongs to the player
 	if w.OwnerID == p.ID {
-		w.X = p.X + math.Cos(angle)*radius
-		w.Y = p.Y + math.Sin(angle)*radius
+		w.X = p.X + math.Cos(direction)*radius
+		w.Y = p.Y + math.Sin(direction)*radius
 	}
 }
 
-func updatePlayerPosition(p *Player, angle float64, speed float64) {
-	p.X += math.Cos(angle) * speed
-	p.Y += math.Sin(angle) * speed
+func updatePlayerPosition(p *Player, direction float64, speed float64) {
+	p.X += math.Cos(direction) * speed
+	p.Y += math.Sin(direction) * speed
 }
 
 // 假設 players 是所有玩家的集合
@@ -226,8 +226,8 @@ func newPlayer(id int) *Player {
 		Width:               10,
 		Height:              20,
 		Health:              100,
-		Angle:               0,
-		Speed:               1,
+		Direction:           0,
+		Speed:               100,
 		WeaponRotationAngle: 0,
 		WeaponRotationSpeed: 1,
 	}
@@ -263,7 +263,7 @@ func (g *Game) run(fps int, hub *Hub) {
 	for range ticker.C {
 		// Update all players
 		for _, p := range g.Players {
-			updatePlayerPosition(p, p.Angle, p.Speed*deltaTime)
+			updatePlayerPosition(p, p.Direction, p.Speed*deltaTime)
 
 			// 更新武器旋轉角度
 			p.WeaponRotationAngle += p.WeaponRotationSpeed * deltaTime

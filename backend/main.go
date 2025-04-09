@@ -47,9 +47,9 @@ func main() {
 	// 註冊路由處理函數
 	http.HandleFunc("/", serveHome) // 處理首頁請求
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		serveWs(hub, w, r) // 處理 WebSocket 連接請求
 		player := newPlayer(rand.Intn(100000000))
 		game.addPlayer(player)
+		serveWs(hub, w, r, player) // 處理 WebSocket 連接請求
 		log.Println("new player", player.ID)
 	})
 

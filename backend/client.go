@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -39,6 +40,8 @@ type Client struct {
 	conn *websocket.Conn
 
 	send chan []byte
+
+	player *Player
 }
 
 func (c *Client) readPump() {
@@ -61,7 +64,16 @@ func (c *Client) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		c.hub.broadcast <- message
+		// message here is json string which contain the new direction(float64) of this client's player
+		var data map[string]any
+		err = json.Unmarshal(message, &data)
+		if err != nil {
+			log.Println("error unmarshalling message", err)
+			continue
+		}
+		direction := data["direction"].(float64)
+		c.player.Direction = direction
+		log.Println("update player angle", c.player.ID, direction)
 	}
 }
 
@@ -104,7 +116,7 @@ func (c *Client) writePump() {
 	}
 }
 
-func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request, player *Player) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -112,7 +124,7 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256)}
+	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), player: player}
 
 	client.hub.register <- client
 

@@ -7,6 +7,7 @@ window.onload = function () {
     var conn;
     var canvas = document.getElementById('gameCanvas');
     var ctx = canvas.getContext('2d');
+    var gameInfo;
     
     // 設置畫布大小為視窗大小
     function resizeCanvas() {
@@ -60,9 +61,8 @@ window.onload = function () {
     // 處理接收到的消息
     function handleMessage(evt) {
         try {
-            var gameInfo = JSON.parse(evt.data);
+            gameInfo = JSON.parse(evt.data);
             drawGame(gameInfo);
-            console.log(gameInfo);
         } catch (e) {
             console.error('Error parsing game info:', e);
         }
@@ -82,6 +82,28 @@ window.onload = function () {
         ctx.font = '30px Arial';
         ctx.fillText('Your browser does not support WebSockets', canvas.width/2 - 200, canvas.height/2);
     }
+
+    // Add event listener for mouse movement
+    canvas.addEventListener('mousemove', function(event) {
+        // Get mouse position relative to the canvas
+        var rect = canvas.getBoundingClientRect();
+        var mouseX = event.clientX - rect.left;
+        var mouseY = event.clientY - rect.top;
+
+        // Calculate angle between player and mouse position
+        gameInfo.Players.forEach(function(player) {
+            var deltaX = mouseX - player.X;
+            var deltaY = mouseY - player.Y;
+            var angle = Math.atan2(deltaY, deltaX);
+
+            // Send the new angle to the server
+            if (conn && conn.readyState === WebSocket.OPEN) {
+                var message = JSON.stringify({ direction: angle });
+                console.log("send message", message);
+                conn.send(message);
+            }
+        });
+    });
 };
 </script>
 <style type="text/css">
