@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+const (
+	// Cooldown duration between hits from the same weapon (in milliseconds)
+	weaponHitCooldown = 1000 * time.Millisecond
+)
+
 type Game struct {
 	Players       []*Player
 	mu            sync.Mutex   // Mutex to protect concurrent access to Players
@@ -26,9 +31,13 @@ type Player struct {
 	// 玩家擁有的武器列表
 	Weapons             []*Weapon
 	WeaponRotationSpeed float64
+
+	// Track last hit time for each weapon to implement cooldown
+	lastHitByWeapon map[int]time.Time // Map of weaponID -> last hit time
 }
 
 type Weapon struct {
+	ID            int     // Unique weapon ID to track cooldown
 	OwnerID       int     // 所屬玩家ID
 	X, Y          float64 // 武器目前的中心
 	Width         float64
@@ -192,7 +201,9 @@ func updatePlayerPosition(p *Player, direction float64, speed float64) {
 }
 
 // 假設 players 是所有玩家的集合
-func checkCollisions(players []*Player) {
+func checkCollisions(players []*Player, hub *Hub) {
+	now := time.Now()
+
 	for _, p := range players {
 		// 遍歷該玩家所有武器
 		for _, w := range p.Weapons {
@@ -202,13 +213,44 @@ func checkCollisions(players []*Player) {
 				if other.ID == w.OwnerID {
 					continue
 				}
+
+				// Check for collision
 				if RectCollision(w.X, w.Y, w.Width, w.Height, other.X, other.Y, other.Width, other.Height) {
-					// 這裡可以加上碰撞冷卻或防重複傷害的判斷
+					// Generate a weapon ID that combines owner and weapon index to uniquely identify weapons
+					weaponID := w.ID
 
-					other.Health -= w.Damage
-					log.Printf("Player %d 被 Player %d 的武器擊中，扣除 %d 點血，剩餘血量：%d\n", other.ID, w.OwnerID, w.Damage, other.Health)
+					// Check cooldown - only apply damage if enough time has passed since last hit
+					lastHitTime, hit := other.lastHitByWeapon[weaponID]
+					if !hit || now.Sub(lastHitTime) >= weaponHitCooldown {
+						// Update the last hit time
+						other.lastHitByWeapon[weaponID] = now
 
-					// 可加入其他效果，例如播放動畫、暫時無敵、音效等
+						// Apply damage
+						other.Health -= w.Damage
+
+						// log.Printf("Player %d 被 Player %d 的武器擊中，扣除 %d 點血，剩餘血量：%d\n",
+						// 	other.ID, w.OwnerID, w.Damage, other.Health)
+
+						// Create hit notification
+						hitNotification, err := json.Marshal(map[string]interface{}{
+							"type":            "playerHit",
+							"from":            w.OwnerID,
+							"to":              other.ID,
+							"damage":          w.Damage,
+							"remainingHealth": other.Health,
+						})
+						if err != nil {
+							log.Println("error marshalling player hit info", err)
+							continue
+						}
+
+						// Broadcast the hit notification to all clients
+						// Both the attacker and victim will receive this message
+						hub.broadcast <- hitNotification
+
+						// log.Printf("Hit notification sent: Player %d hit Player %d for %d damage",
+						// 	w.OwnerID, other.ID, w.Damage)
+					}
 				}
 			}
 		}
@@ -256,11 +298,12 @@ func (g *Game) addNewPlayer() *Player {
 		Speed:               100,
 		WeaponRotationAngle: 0,
 		WeaponRotationSpeed: 1,
+		lastHitByWeapon:     make(map[int]time.Time), // Initialize the last hit map
 	}
 
 	// Generate two weapons
 	weapons := []*Weapon{}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		weapons = append(weapons, newWeapon(player))
 	}
 	player.Weapons = weapons
@@ -275,7 +318,15 @@ func (g *Game) addNewPlayer() *Player {
 }
 
 func newWeapon(owner *Player) *Weapon {
+
+	// Create a unique weapon ID based on owner ID and weapon index
+
+	index := len(owner.Weapons)
+
+	weaponID := owner.ID*100 + index
+
 	return &Weapon{
+		ID:      weaponID,
 		OwnerID: owner.ID,
 		X:       owner.X,
 		Y:       owner.Y,
@@ -315,7 +366,7 @@ func (g *Game) run(fps int, hub *Hub) {
 			}
 		}
 		// Check for collisions between players
-		checkCollisions(g.Players)
+		checkCollisions(g.Players, hub)
 
 		playersCopy := make([]*Player, len(g.Players))
 		copy(playersCopy, g.Players)

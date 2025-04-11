@@ -10,6 +10,9 @@ window.onload = function () {
     var gameInfo = { players: [] };
     var playerID = null;
     var joinBtn = document.getElementById('joinBtn');
+    var notifications = [];
+    var lastHitEffectTime = 0;
+    var isHitEffectActive = false;
     
     // 設置畫布大小為視窗大小
     function resizeCanvas() {
@@ -29,7 +32,7 @@ window.onload = function () {
         if (player.ID === playerID) {
             ctx.fillStyle = '#00BFFF'; // Light blue for current player
         } else {
-            ctx.fillStyle = player.Health > 50 ? 'green' : 'red';
+            ctx.fillStyle = 'gray';
         }
 
         ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2, player.Width, player.Height);
@@ -50,6 +53,48 @@ window.onload = function () {
     function drawWeapon(weapon) {
         ctx.fillStyle = 'yellow';
         ctx.fillRect(weapon.X - weapon.Width / 2, weapon.Y - weapon.Height / 2, weapon.Width, weapon.Height);
+    }
+    
+    // 顯示擊中效果
+    function drawHitEffect() {
+        if (isHitEffectActive) {
+            // Draw a red overlay to indicate being hit
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Check if we should stop the effect (after 200ms)
+            if (Date.now() - lastHitEffectTime > 200) {
+                isHitEffectActive = false;
+            }
+        }
+    }
+    
+    // 顯示通知訊息
+    function drawNotifications() {
+        // Only show the last 3 notifications
+        const displayCount = Math.min(notifications.length, 3);
+        const startY = 60; // Starting Y position for the first notification
+        
+        ctx.font = '16px Arial';
+        ctx.textAlign = 'left';
+        
+        for (let i = 0; i < displayCount; i++) {
+            const notification = notifications[notifications.length - 1 - i];
+            const y = startY + i * 25;
+            
+            // Draw notification background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, y - 16, ctx.measureText(notification.text).width + 20, 22);
+            
+            // Draw notification text
+            ctx.fillStyle = notification.color;
+            ctx.fillText(notification.text, 20, y);
+            
+            // Remove old notifications (after 5 seconds)
+            if (Date.now() - notification.time > 5000) {
+                notifications.splice(notifications.length - 1 - i, 1);
+            }
+        }
     }
     
     // 繪製遊戲畫面
@@ -73,6 +118,43 @@ window.onload = function () {
         } else {
             joinBtn.style.display = 'none';
         }
+        
+        // Draw hit effect if active
+        drawHitEffect();
+        
+        // Draw notifications
+        drawNotifications();
+    }
+    
+    // Add a notification
+    function addNotification(text, color) {
+        notifications.push({
+            text: text,
+            color: color || 'white',
+            time: Date.now()
+        });
+        
+        // Limit notifications to a maximum of 10
+        if (notifications.length > 10) {
+            notifications.shift();
+        }
+    }
+    
+    // Handle hit notification
+    function handleHitNotification(data) {
+        // Check if current player was hit
+        if (playerID === data.to) {
+            // Activate hit effect
+            isHitEffectActive = true;
+            lastHitEffectTime = Date.now();
+            
+            addNotification('You were hit by Player ' + data.from + ' (-' + data.damage + ' HP)', '#FF6347');
+        }
+        
+        // Check if current player hit someone
+        else if (playerID === data.from) {
+            addNotification('You hit Player ' + data.to + ' for ' + data.damage + ' damage!', '#90EE90');
+        }
     }
 
     // 處理接收到的消息
@@ -85,10 +167,15 @@ window.onload = function () {
                 case "joined":
                     playerID = message.playerID;
                     console.log("Joined game with player ID:", playerID);
+                    addNotification('You joined the game as Player ' + playerID, '#00BFFF');
                     break;
                     
                 case "gameState":
                     gameInfo = message;
+                    break;
+                
+                case "playerHit":
+                    handleHitNotification(message);
                     break;
                     
                 default:
