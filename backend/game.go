@@ -11,6 +11,12 @@ import (
 const (
 	// Cooldown duration between hits from the same weapon (in milliseconds)
 	weaponHitCooldown = 1000 * time.Millisecond
+
+	// Game boundary constants
+	gameMinX = 0
+	gameMinY = 0
+	gameMaxX = 1200
+	gameMaxY = 800
 )
 
 type Game struct {
@@ -196,8 +202,32 @@ func updateWeaponPosition(p *Player, w *Weapon, direction float64, radius float6
 }
 
 func updatePlayerPosition(p *Player, direction float64, speed float64) {
-	p.X += math.Cos(direction) * speed
-	p.Y += math.Sin(direction) * speed
+	// Calculate new position
+	newX := p.X + math.Cos(direction)*speed
+	newY := p.Y + math.Sin(direction)*speed
+
+	// Apply boundary constraints
+	// Calculate half width/height for player boundaries
+	halfWidth := p.Width / 2
+	halfHeight := p.Height / 2
+
+	// Constrain X position
+	if newX-halfWidth < gameMinX {
+		newX = gameMinX + halfWidth
+	} else if newX+halfWidth > gameMaxX {
+		newX = gameMaxX - halfWidth
+	}
+
+	// Constrain Y position
+	if newY-halfHeight < gameMinY {
+		newY = gameMinY + halfHeight
+	} else if newY+halfHeight > gameMaxY {
+		newY = gameMaxY - halfHeight
+	}
+
+	// Update player position
+	p.X = newX
+	p.Y = newY
 }
 
 // 假設 players 是所有玩家的集合

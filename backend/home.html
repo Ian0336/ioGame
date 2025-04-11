@@ -14,10 +14,28 @@ window.onload = function () {
     var lastHitEffectTime = 0;
     var isHitEffectActive = false;
     
-    // 設置畫布大小為視窗大小
+    // Game boundary constants - should match server
+    const GAME_MIN_X = 0;
+    const GAME_MIN_Y = 0;
+    const GAME_MAX_X = 1200;
+    const GAME_MAX_Y = 800;
+    
+    // 設置畫布大小
     function resizeCanvas() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        // Set canvas to game size with responsive scaling
+        canvas.width = GAME_MAX_X;
+        canvas.height = GAME_MAX_Y;
+        
+        // Scale the canvas to fit the window while maintaining aspect ratio
+        const containerWidth = window.innerWidth;
+        const containerHeight = window.innerHeight;
+        const scale = Math.min(
+            containerWidth / GAME_MAX_X,
+            containerHeight / GAME_MAX_Y
+        );
+        
+        canvas.style.width = (GAME_MAX_X * scale) + 'px';
+        canvas.style.height = (GAME_MAX_Y * scale) + 'px';
     }
     
     // 監聽視窗大小變化
@@ -34,6 +52,7 @@ window.onload = function () {
         } else {
             ctx.fillStyle = 'gray';
         }
+        console.log("player.X and player.Y", player.X, player.Y);
 
         ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2, player.Width, player.Height);
         
@@ -47,6 +66,34 @@ window.onload = function () {
         ctx.fillStyle = 'white';
         ctx.font = '12px Arial';
         ctx.fillText('Player ' + player.ID, player.X - player.Width / 2, player.Y - player.Height / 2 - 15);
+    }
+    
+    // 繪製邊界
+    function drawBoundary() {
+        // Draw a border around the game area
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(GAME_MIN_X, GAME_MIN_Y, GAME_MAX_X, GAME_MAX_Y);
+        
+        // Add some grid lines for reference (optional)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = 1;
+        
+        // Horizontal grid lines
+        for (let y = 100; y < GAME_MAX_Y; y += 100) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(GAME_MAX_X, y);
+            ctx.stroke();
+        }
+        
+        // Vertical grid lines
+        for (let x = 100; x < GAME_MAX_X; x += 100) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, GAME_MAX_Y);
+            ctx.stroke();
+        }
     }
     
     // 繪製武器
@@ -104,6 +151,9 @@ window.onload = function () {
     function drawGame() {
         // 清空畫布
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw background and boundary
+        drawBoundary();
         
         if (gameInfo.players && gameInfo.players.length > 0) {
             // 繪製所有玩家和他們的武器
@@ -259,10 +309,13 @@ window.onload = function () {
         // Only send direction if player exists
         if (!playerID) return;
         
-        // Get mouse position relative to the canvas
-        var rect = canvas.getBoundingClientRect();
-        var mouseX = event.clientX - rect.left;
-        var mouseY = event.clientY - rect.top;
+        // Get mouse position relative to the game coordinates
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const mouseX = (event.clientX - rect.left) * scaleX;
+        const mouseY = (event.clientY - rect.top) * scaleY;
 
         // Find current player
         var currentPlayer = null;
@@ -322,12 +375,18 @@ html, body {
     width: 100%;
     height: 100%;
     overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #222;
     font-family: Arial, sans-serif;
 }
 
 #gameCanvas {
     display: block;
     background: #333;
+    max-width: 100%;
+    max-height: 100%;
 }
 
 #joinBtn {
