@@ -81,6 +81,9 @@ window.onload = function () {
         for (let i = 0; i < displayCount; i++) {
             const notification = notifications[notifications.length - 1 - i];
             const y = startY + i * 25;
+            if(!notification) {
+                continue;
+            }
             
             // Draw notification background
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -160,32 +163,65 @@ window.onload = function () {
     // 處理接收到的消息
     function handleMessage(evt) {
         try {
-            var message = JSON.parse(evt.data);
+            // Get the raw message data
+            const messageData = evt.data;
             
-            // Handle different message types
-            switch (message.type) {
-                case "joined":
-                    playerID = message.playerID;
-                    console.log("Joined game with player ID:", playerID);
-                    addNotification('You joined the game as Player ' + playerID, '#00BFFF');
-                    break;
-                    
-                case "gameState":
-                    gameInfo = message;
-                    break;
+            // Check if the message might contain multiple JSON objects
+            // (look for closing brace followed by opening brace pattern)
+            if (messageData.match(/}\s*{/)) {
+                console.log("Received multiple messages in one packet");
                 
-                case "playerHit":
-                    handleHitNotification(message);
-                    break;
-                    
-                default:
-                    console.log("Unknown message type:", message.type);
+                // Try to split multiple JSON messages
+                // This is a simple approach that might not work for all cases
+                const jsonStrings = messageData.split(/(?<=})\s*(?={)/);
+                
+                // Process each JSON string separately
+                jsonStrings.forEach(jsonStr => {
+                    try {
+                        const message = JSON.parse(jsonStr);
+                        processMessage(message);
+                    } catch (parseErr) {
+                        console.error('Error parsing split message:', parseErr, jsonStr);
+                    }
+                });
+            } else {
+                // Single JSON message
+                const message = JSON.parse(messageData);
+                processMessage(message);
             }
-            
-            drawGame();
         } catch (e) {
+            console.log("Received message:", evt.data);
             console.error('Error parsing message:', e);
         }
+    }
+
+    // Process a single message based on its type
+    function processMessage(message) {
+        // Handle different message types
+        switch (message.type) {
+            case "joined":
+                playerID = message.playerID;
+                console.log("Joined game with player ID:", playerID);
+                addNotification('You joined the game as Player ' + playerID, '#00BFFF');
+                break;
+                
+            case "gameState":
+                gameInfo = message;
+                break;
+            
+            case "playerHit":
+                handleHitNotification(message);
+                break;
+            
+            case "playerDeath":
+                handlePlayerDeath(message);
+                break;
+                
+            default:
+                console.log("Unknown message type:", message.type);
+        }
+        
+        drawGame();
     }
 
     // 加入遊戲
@@ -261,6 +297,22 @@ window.onload = function () {
     
     // Start the game loop
     gameLoop();
+
+    // Handle player death
+    function handlePlayerDeath(data) {
+        // Check if current player died
+        if (playerID === data.playerID) {
+            addNotification('You died! Click Join to play again.', '#FF0000');
+            playerID = null;  // Reset player ID so they can join again
+            window.alert('You died! Click Join to play again.');
+            joinBtn.style.display = 'block';  // Show join button again
+        } else {
+            addNotification('Player ' + data.playerID + ' died!', '#FFA500');
+        }
+        
+        // Play death sound or show death animation if needed
+        // ...
+    }
 };
 </script>
 <style type="text/css">

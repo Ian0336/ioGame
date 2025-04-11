@@ -51,7 +51,7 @@ func (c *Client) readPump() {
 		c.hub.unregister <- c
 		// Remove player from game if exists
 		if c.player != nil {
-			c.game.removePlayer(c.player.ID)
+			c.game.removePlayer(c.player.ID, false)
 			log.Printf("Player %d disconnected", c.player.ID)
 		}
 		c.conn.Close()

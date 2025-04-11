@@ -201,14 +201,14 @@ func updatePlayerPosition(p *Player, direction float64, speed float64) {
 }
 
 // 假設 players 是所有玩家的集合
-func checkCollisions(players []*Player, hub *Hub) {
+func (g *Game) checkCollisions(hub *Hub) {
 	now := time.Now()
 
-	for _, p := range players {
+	for _, p := range g.Players {
 		// 遍歷該玩家所有武器
 		for _, w := range p.Weapons {
 			// 檢查此武器是否碰撞到其他玩家
-			for _, other := range players {
+			for _, other := range g.Players {
 				// 排除自己的武器碰撞自己
 				if other.ID == w.OwnerID {
 					continue
@@ -253,6 +253,55 @@ func checkCollisions(players []*Player, hub *Hub) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// Release player ID when removed
+// If skipLock is true, assumes the mutex is already locked
+func (g *Game) removePlayer(playerID int, skipLock bool) {
+	if !skipLock {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+	}
+
+	// Remove the player ID from used IDs
+	delete(g.usedPlayerIDs, playerID)
+
+	for i, player := range g.Players {
+		if player.ID == playerID {
+			// Remove player by swapping with the last element and truncating
+			lastIndex := len(g.Players) - 1
+			g.Players[i] = g.Players[lastIndex]
+			g.Players = g.Players[:lastIndex]
+			log.Printf("Player %d removed from game", playerID)
+			return
+		}
+	}
+}
+
+func (g *Game) removeDeadPlayers(hub *Hub) {
+	// Don't acquire the mutex here as it's already locked in the game loop
+	removePlayers := []*Player{}
+	for _, p := range g.Players {
+		if p.Health <= 0 {
+			removePlayers = append(removePlayers, p)
+		}
+	}
+
+	if len(removePlayers) > 0 {
+		for _, p := range removePlayers {
+			// Send death notification before removing the player
+			deathNotification, err := json.Marshal(map[string]interface{}{
+				"type":     "playerDeath",
+				"playerID": p.ID,
+			})
+			if err == nil {
+				hub.broadcast <- deathNotification
+			}
+
+			// Remove the player (skip locking as mutex is already locked)
+			g.removePlayer(p.ID, true)
 		}
 	}
 }
@@ -332,7 +381,7 @@ func newWeapon(owner *Player) *Weapon {
 		Y:       owner.Y,
 		Width:   10,
 		Height:  20,
-		Damage:  10,
+		Damage:  40,
 	}
 }
 
@@ -366,7 +415,8 @@ func (g *Game) run(fps int, hub *Hub) {
 			}
 		}
 		// Check for collisions between players
-		checkCollisions(g.Players, hub)
+		g.checkCollisions(hub)
+		g.removeDeadPlayers(hub)
 
 		playersCopy := make([]*Player, len(g.Players))
 		copy(playersCopy, g.Players)
@@ -382,25 +432,5 @@ func (g *Game) run(fps int, hub *Hub) {
 			continue
 		}
 		hub.broadcast <- jsonData
-	}
-}
-
-// Release player ID when removed
-func (g *Game) removePlayer(playerID int) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	// Remove the player ID from used IDs
-	delete(g.usedPlayerIDs, playerID)
-
-	for i, player := range g.Players {
-		if player.ID == playerID {
-			// Remove player by swapping with the last element and truncating
-			lastIndex := len(g.Players) - 1
-			g.Players[i] = g.Players[lastIndex]
-			g.Players = g.Players[:lastIndex]
-			log.Printf("Player %d removed from game", playerID)
-			return
-		}
 	}
 }
