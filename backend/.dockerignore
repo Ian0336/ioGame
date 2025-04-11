@@ -1,0 +1,26 @@
+# Git 相關
+.git
+.gitignore
+
+# Docker 相關
+Dockerfile
+.dockerignore
+
+# 臨時編譯文件
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE 相關
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 其他
+README.md
+/tmp/ 

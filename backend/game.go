@@ -422,7 +422,6 @@ func (g *Game) run(fps int, hub *Hub) {
 
 	for range ticker.C {
 		g.mu.Lock()
-		log.Println("Current players:", len(g.Players))
 		// Update all players
 		for _, p := range g.Players {
 			updatePlayerPosition(p, p.Direction, p.Speed*deltaTime)
