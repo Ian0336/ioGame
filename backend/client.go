@@ -42,11 +42,18 @@ type Client struct {
 	send chan []byte
 
 	player *Player
+
+	game *Game
 }
 
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
+		// Remove player from game if exists
+		if c.player != nil {
+			c.game.removePlayer(c.player.ID)
+			log.Printf("Player %d disconnected", c.player.ID)
+		}
 		c.conn.Close()
 	}()
 
@@ -64,16 +71,42 @@ func (c *Client) readPump() {
 			break
 		}
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		// message here is json string which contain the new direction(float64) of this client's player
+
 		var data map[string]any
 		err = json.Unmarshal(message, &data)
 		if err != nil {
 			log.Println("error unmarshalling message", err)
 			continue
 		}
-		direction := data["direction"].(float64)
-		c.player.Direction = direction
-		log.Println("update player angle", c.player.ID, direction)
+
+		// Check message type
+		if messageType, ok := data["type"].(string); ok {
+			switch messageType {
+			case "join":
+				// Create a new player only if the client doesn't already have one
+				if c.player == nil {
+					c.player = c.game.addNewPlayer()
+
+					// Send acknowledgment back to client
+					response := map[string]any{
+						"type":     "joined",
+						"playerID": c.player.ID,
+					}
+					responseJSON, _ := json.Marshal(response)
+					c.send <- responseJSON
+				}
+
+			case "direction":
+				// Only update direction if player exists
+				if c.player != nil && data["direction"] != nil {
+					direction := data["direction"].(float64)
+					c.player.Direction = direction
+				}
+
+			default:
+				log.Println("unknown message type:", messageType)
+			}
+		}
 	}
 }
 
@@ -116,15 +149,20 @@ func (c *Client) writePump() {
 	}
 }
 
-func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request, player *Player) {
-
+func serveWs(hub *Hub, game *Game, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), player: player}
+	client := &Client{
+		hub:    hub,
+		game:   game,
+		conn:   conn,
+		send:   make(chan []byte, 256),
+		player: nil, // Player will be created when client sends join message
+	}
 
 	client.hub.register <- client
 

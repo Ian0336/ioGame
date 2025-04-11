@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 )
 
@@ -47,10 +46,8 @@ func main() {
 	// 註冊路由處理函數
 	http.HandleFunc("/", serveHome) // 處理首頁請求
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		player := newPlayer(rand.Intn(100000000))
-		game.addPlayer(player)
-		serveWs(hub, w, r, player) // 處理 WebSocket 連接請求
-		log.Println("new player", player.ID)
+		// Player will be created when the client sends a join message
+		serveWs(hub, game, w, r)
 	})
 
 	fmt.Println("Server is running on port", *addr)

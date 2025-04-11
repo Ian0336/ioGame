@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"log"
 	"math"
+	"sync"
 	"time"
 )
 
 type Game struct {
-	Players []*Player
+	Players       []*Player
+	mu            sync.Mutex   // Mutex to protect concurrent access to Players
+	usedPlayerIDs map[int]bool // Track used player IDs
 }
 
 type Player struct {
@@ -214,11 +217,34 @@ func checkCollisions(players []*Player) {
 
 func newGame() *Game {
 	return &Game{
-		Players: []*Player{},
+		Players:       []*Player{},
+		usedPlayerIDs: make(map[int]bool),
 	}
 }
 
-func newPlayer(id int) *Player {
+// Generate a unique player ID that hasn't been used before
+func (g *Game) generateUniquePlayerID() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Try to find an unused ID
+	var id int
+	for {
+		// Generate a random ID between 1 and 1,000,000,000
+		id = int(time.Now().UnixNano() % 1000000000)
+		if !g.usedPlayerIDs[id] {
+			g.usedPlayerIDs[id] = true
+			return id
+		}
+		// In the unlikely case of a collision, we'll generate a new ID
+		time.Sleep(time.Nanosecond)
+	}
+}
+
+// Add a new player with a unique ID to the game and return it
+func (g *Game) addNewPlayer() *Player {
+	id := g.generateUniquePlayerID()
+
 	player := &Player{
 		ID:                  id,
 		X:                   100,
@@ -231,12 +257,20 @@ func newPlayer(id int) *Player {
 		WeaponRotationAngle: 0,
 		WeaponRotationSpeed: 1,
 	}
-	// generate two weapon
+
+	// Generate two weapons
 	weapons := []*Weapon{}
 	for i := 0; i < 2; i++ {
 		weapons = append(weapons, newWeapon(player))
 	}
 	player.Weapons = weapons
+
+	// Add the player to the game
+	g.mu.Lock()
+	g.Players = append(g.Players, player)
+	g.mu.Unlock()
+
+	log.Printf("New player %d added to game", id)
 	return player
 }
 
@@ -251,16 +285,14 @@ func newWeapon(owner *Player) *Weapon {
 	}
 }
 
-func (g *Game) addPlayer(p *Player) {
-	g.Players = append(g.Players, p)
-}
-
 func (g *Game) run(fps int, hub *Hub) {
 	deltaTime := 1.0 / float64(fps)
 	ticker := time.NewTicker(time.Second / time.Duration(fps))
 	defer ticker.Stop()
 
 	for range ticker.C {
+		g.mu.Lock()
+		log.Println("Current players:", len(g.Players))
 		// Update all players
 		for _, p := range g.Players {
 			updatePlayerPosition(p, p.Direction, p.Speed*deltaTime)
@@ -285,12 +317,39 @@ func (g *Game) run(fps int, hub *Hub) {
 		// Check for collisions between players
 		checkCollisions(g.Players)
 
+		playersCopy := make([]*Player, len(g.Players))
+		copy(playersCopy, g.Players)
+		g.mu.Unlock()
+
 		// Send game state to clients
-		jsonData, err := json.Marshal(g)
+		jsonData, err := json.Marshal(map[string]interface{}{
+			"type":    "gameState",
+			"players": playersCopy,
+		})
 		if err != nil {
 			log.Println("error marshalling game info", err)
 			continue
 		}
 		hub.broadcast <- jsonData
+	}
+}
+
+// Release player ID when removed
+func (g *Game) removePlayer(playerID int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Remove the player ID from used IDs
+	delete(g.usedPlayerIDs, playerID)
+
+	for i, player := range g.Players {
+		if player.ID == playerID {
+			// Remove player by swapping with the last element and truncating
+			lastIndex := len(g.Players) - 1
+			g.Players[i] = g.Players[lastIndex]
+			g.Players = g.Players[:lastIndex]
+			log.Printf("Player %d removed from game", playerID)
+			return
+		}
 	}
 }

@@ -7,7 +7,9 @@ window.onload = function () {
     var conn;
     var canvas = document.getElementById('gameCanvas');
     var ctx = canvas.getContext('2d');
-    var gameInfo;
+    var gameInfo = { players: [] };
+    var playerID = null;
+    var joinBtn = document.getElementById('joinBtn');
     
     // 設置畫布大小為視窗大小
     function resizeCanvas() {
@@ -22,7 +24,13 @@ window.onload = function () {
     // 繪製玩家
     function drawPlayer(player) {
         player.Health = Math.max(player.Health, 0);
-        ctx.fillStyle = player.Health > 50 ? 'green' : 'red';
+        
+        // Highlight current player
+        if (player.ID === playerID) {
+            ctx.fillStyle = '#00BFFF'; // Light blue for current player
+        } else {
+            ctx.fillStyle = player.Health > 50 ? 'green' : 'red';
+        }
 
         ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2, player.Width, player.Height);
         
@@ -45,32 +53,69 @@ window.onload = function () {
     }
     
     // 繪製遊戲畫面
-    function drawGame(gameInfo) {
+    function drawGame() {
         // 清空畫布
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        // 繪製所有玩家和他們的武器
-        gameInfo.Players.forEach(function(player) {
-            drawPlayer(player);
-            player.Weapons.forEach(function(weapon) {
-                drawWeapon(weapon);
+        if (gameInfo.players && gameInfo.players.length > 0) {
+            // 繪製所有玩家和他們的武器
+            gameInfo.players.forEach(function(player) {
+                drawPlayer(player);
+                player.Weapons.forEach(function(weapon) {
+                    drawWeapon(weapon);
+                });
             });
-        });
+        }
+        
+        // 顯示加入遊戲按鈕狀態
+        if (!playerID) {
+            joinBtn.style.display = 'block';
+        } else {
+            joinBtn.style.display = 'none';
+        }
     }
 
     // 處理接收到的消息
     function handleMessage(evt) {
         try {
-            gameInfo = JSON.parse(evt.data);
-            drawGame(gameInfo);
+            var message = JSON.parse(evt.data);
+            
+            // Handle different message types
+            switch (message.type) {
+                case "joined":
+                    playerID = message.playerID;
+                    console.log("Joined game with player ID:", playerID);
+                    break;
+                    
+                case "gameState":
+                    gameInfo = message;
+                    break;
+                    
+                default:
+                    console.log("Unknown message type:", message.type);
+            }
+            
+            drawGame();
         } catch (e) {
-            console.error('Error parsing game info:', e);
+            console.error('Error parsing message:', e);
+        }
+    }
+
+    // 加入遊戲
+    function joinGame() {
+        if (conn && conn.readyState === WebSocket.OPEN) {
+            var joinMessage = JSON.stringify({ type: "join" });
+            conn.send(joinMessage);
+            console.log("Sent join request");
         }
     }
 
     // 建立 WebSocket 連接
     if (window["WebSocket"]) {
         conn = new WebSocket("ws://" + document.location.host + "/ws");
+        conn.onopen = function(evt) {
+            console.log("WebSocket connection established");
+        };
         conn.onclose = function (evt) {
             ctx.fillStyle = 'red';
             ctx.font = '30px Arial';
@@ -83,27 +128,52 @@ window.onload = function () {
         ctx.fillText('Your browser does not support WebSockets', canvas.width/2 - 200, canvas.height/2);
     }
 
+    // Join button event listener
+    joinBtn.addEventListener('click', joinGame);
+
     // Add event listener for mouse movement
     canvas.addEventListener('mousemove', function(event) {
+        // Only send direction if player exists
+        if (!playerID) return;
+        
         // Get mouse position relative to the canvas
         var rect = canvas.getBoundingClientRect();
         var mouseX = event.clientX - rect.left;
         var mouseY = event.clientY - rect.top;
 
-        // Calculate angle between player and mouse position
-        gameInfo.Players.forEach(function(player) {
-            var deltaX = mouseX - player.X;
-            var deltaY = mouseY - player.Y;
+        // Find current player
+        var currentPlayer = null;
+        if (gameInfo.players) {
+            currentPlayer = gameInfo.players.find(function(player) {
+                return player.ID === playerID;
+            });
+        }
+        
+        if (currentPlayer) {
+            // Calculate angle between player and mouse position
+            var deltaX = mouseX - currentPlayer.X;
+            var deltaY = mouseY - currentPlayer.Y;
             var angle = Math.atan2(deltaY, deltaX);
 
             // Send the new angle to the server
             if (conn && conn.readyState === WebSocket.OPEN) {
-                var message = JSON.stringify({ direction: angle });
-                console.log("send message", message);
+                var message = JSON.stringify({ 
+                    type: "direction", 
+                    direction: angle 
+                });
                 conn.send(message);
             }
-        });
+        }
     });
+    
+    // Game loop
+    function gameLoop() {
+        drawGame();
+        requestAnimationFrame(gameLoop);
+    }
+    
+    // Start the game loop
+    gameLoop();
 };
 </script>
 <style type="text/css">
@@ -113,15 +183,36 @@ html, body {
     width: 100%;
     height: 100%;
     overflow: hidden;
+    font-family: Arial, sans-serif;
 }
 
 #gameCanvas {
     display: block;
     background: #333;
 }
+
+#joinBtn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 15px 30px;
+    font-size: 18px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+#joinBtn:hover {
+    background-color: #45a049;
+}
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
+<button id="joinBtn">Join Game</button>
 </body>
 </html>
