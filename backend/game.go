@@ -40,6 +40,7 @@ type Player struct {
 
 	// Track last hit time for each weapon to implement cooldown
 	lastHitByWeapon map[int]time.Time // Map of weaponID -> last hit time
+	Client          *Client
 }
 
 type Weapon struct {
@@ -274,9 +275,13 @@ func (g *Game) checkCollisions(hub *Hub) {
 							continue
 						}
 
-						// Broadcast the hit notification to all clients
-						// Both the attacker and victim will receive this message
-						hub.broadcast <- hitNotification
+						// Send hit notifications only if clients are not nil
+						if p.Client != nil {
+							p.Client.send <- hitNotification
+						}
+						if other.Client != nil {
+							other.Client.send <- hitNotification
+						}
 
 						// log.Printf("Hit notification sent: Player %d hit Player %d for %d damage",
 						// 	w.OwnerID, other.ID, w.Damage)
@@ -305,6 +310,9 @@ func (g *Game) removePlayer(playerID int, skipLock bool) {
 			g.Players[i] = g.Players[lastIndex]
 			g.Players = g.Players[:lastIndex]
 			log.Printf("Player %d removed from game", playerID)
+			if player.Client != nil {
+				player.Client.player = nil
+			}
 			return
 		}
 	}
@@ -321,13 +329,15 @@ func (g *Game) removeDeadPlayers(hub *Hub) {
 
 	if len(removePlayers) > 0 {
 		for _, p := range removePlayers {
-			// Send death notification before removing the player
-			deathNotification, err := json.Marshal(map[string]interface{}{
-				"type":     "playerDeath",
-				"playerID": p.ID,
-			})
-			if err == nil {
-				hub.broadcast <- deathNotification
+			// Only send death notification if Client is not nil
+			if p.Client != nil {
+				deathNotification, err := json.Marshal(map[string]interface{}{
+					"type":     "playerDeath",
+					"playerID": p.ID,
+				})
+				if err == nil {
+					p.Client.send <- deathNotification
+				}
 			}
 
 			// Remove the player (skip locking as mutex is already locked)
@@ -363,7 +373,7 @@ func (g *Game) generateUniquePlayerID() int {
 }
 
 // Add a new player with a unique ID to the game and return it
-func (g *Game) addNewPlayer() *Player {
+func (g *Game) addNewPlayer(client *Client) *Player {
 	id := g.generateUniquePlayerID()
 
 	player := &Player{
@@ -378,6 +388,7 @@ func (g *Game) addNewPlayer() *Player {
 		WeaponRotationAngle: 0,
 		WeaponRotationSpeed: 1,
 		lastHitByWeapon:     make(map[int]time.Time), // Initialize the last hit map
+		Client:              client,
 	}
 
 	// Generate two weapons

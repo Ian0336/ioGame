@@ -52,7 +52,6 @@ window.onload = function () {
         } else {
             ctx.fillStyle = 'gray';
         }
-        console.log("player.X and player.Y", player.X, player.Y);
 
         ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2, player.Width, player.Height);
         
@@ -285,7 +284,13 @@ window.onload = function () {
 
     // 建立 WebSocket 連接
     if (window["WebSocket"]) {
-        conn = new WebSocket("ws://" + document.location.host + "/ws");
+        // 根據當前頁面協議自動選擇 WebSocket 協議
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = protocol + '//' + document.location.host + '/ws';
+        
+        console.log("Connecting to WebSocket at:", wsUrl);
+        conn = new WebSocket(wsUrl);
+        
         conn.onopen = function(evt) {
             console.log("WebSocket connection established");
         };
@@ -357,7 +362,6 @@ window.onload = function () {
         if (playerID === data.playerID) {
             addNotification('You died! Click Join to play again.', '#FF0000');
             playerID = null;  // Reset player ID so they can join again
-            window.alert('You died! Click Join to play again.');
             joinBtn.style.display = 'block';  // Show join button again
         } else {
             addNotification('Player ' + data.playerID + ' died!', '#FFA500');

@@ -51,8 +51,8 @@ func (c *Client) readPump() {
 		c.hub.unregister <- c
 		// Remove player from game if exists
 		if c.player != nil {
-			c.game.removePlayer(c.player.ID, false)
 			log.Printf("Player %d disconnected", c.player.ID)
+			c.game.removePlayer(c.player.ID, false)
 		}
 		c.conn.Close()
 	}()
@@ -85,7 +85,7 @@ func (c *Client) readPump() {
 			case "join":
 				// Create a new player only if the client doesn't already have one
 				if c.player == nil {
-					c.player = c.game.addNewPlayer()
+					c.player = c.game.addNewPlayer(c)
 
 					// Send acknowledgment back to client
 					response := map[string]any{

@@ -26,6 +26,7 @@ docker build -t iogame .
 2. Run Docker container:
 
 ```bash
-docker run -p 8080:8080 iogame
+docker run -d -p 8080:8080 iogame-backend
+
 ```
 
