@@ -12,6 +12,9 @@ import (
 const (
 	// Cooldown duration between hits from the same weapon (in milliseconds)
 	weaponHitCooldown = 1000 * time.Millisecond
+	playerMasterRatio = 2
+	baseMonsterAmount = 10
+	maxMonsterAmount  = 60
 
 	// Game boundary constants
 	gameMinX = 0
@@ -20,95 +23,123 @@ const (
 	gameMaxY = 800
 )
 
-// Monster represents a neutral enemy in the game world
-// that can be attacked by players and drops a healing potion upon death.
-type Monster struct {
-	ID        int
-	X, Y      float64
-	Width     float64
-	Height    float64
-	Health    int
-	MaxHealth int
-	Speed     float64
-	Direction float64
-}
-
-// HealingPotion represents a health recovery item dropped by monsters.
-type HealingPotion struct {
+// Entity is the base struct for all game objects with position and size
+type Entity struct {
 	ID     int
 	X, Y   float64
 	Width  float64
 	Height float64
-	Amount int // Amount of health restored
 }
 
-type Game struct {
-	Players        []*Player
-	Monsters       []*Monster
-	HealingPotions []*HealingPotion
-	mu             sync.Mutex   // Mutex to protect concurrent access to Players
-	usedPlayerIDs  map[int]bool // Track used player IDs
-	usedMonsterIDs map[int]bool // Track used monster IDs
-	usedPotionIDs  map[int]bool // Track used potion IDs
+// Movable is an interface for entities that can move
+type Movable interface {
+	Move(deltaTime float64)
 }
 
-type Player struct {
-	ID                  int
-	X, Y                float64 // 玩家中心
-	Width               float64
-	Height              float64
-	Health              int
-	Direction           float64
-	Speed               float64
-	WeaponRotationAngle float64 // 武器旋轉的基準角度
-	// 玩家擁有的武器列表
-	Weapons             []*Weapon
-	WeaponRotationSpeed float64
-
-	// Track last hit time for each weapon to implement cooldown
-	lastHitByWeapon map[int]time.Time // Map of weaponID -> last hit time
-	Client          *Client
+// Collidable is an interface for entities that can be checked for collision
+type Collidable interface {
+	CheckCollision(other *Entity) bool
+	GetEntity() *Entity
 }
 
-type Weapon struct {
-	ID            int     // Unique weapon ID to track cooldown
-	OwnerID       int     // 所屬玩家ID
-	X, Y          float64 // 武器目前的中心
-	Width         float64
-	Height        float64
-	RotationAngle float64 // 武器旋轉的角度
-	Damage        int     // 每次碰撞造成的傷害
+// Hittable is an interface for entities that can take damage
+type Hittable interface {
+	Collidable
+	TakeDamage(damage int)
+	IsDead() bool
 }
 
-func RectCollision(x1, y1, w1, h1, x2, y2, w2, h2 float64) bool {
+// ItemCollector is an interface for entities that can collect items
+type ItemCollector interface {
+	Collidable
+	CollectItem(item *Item)
+}
+
+// Item is an interface for collectible entities
+type Item interface {
+	Collidable
+	OnCollect(collector ItemCollector)
+}
+
+// GetEntity returns the base Entity of an object
+func (e *Entity) GetEntity() *Entity {
+	return e
+}
+
+// RectCollision checks for collision between two entities
+func (e *Entity) CheckCollision(other *Entity) bool {
 	// Adjust coordinates to top-left corner
-	x1 -= w1 / 2
-	y1 -= h1 / 2
-	x2 -= w2 / 2
-	y2 -= h2 / 2
+	x1 := e.X - e.Width/2
+	y1 := e.Y - e.Height/2
+	x2 := other.X - other.Width/2
+	y2 := other.Y - other.Height/2
 
 	// Simple rectangle collision detection (ignoring rotation)
-	if x1 > x2+w2 || x1+w1 < x2 || y1 > y2+h2 || y1+h1 < y2 {
+	if x1 > x2+other.Width || x1+e.Width < x2 || y1 > y2+other.Height || y1+e.Height < y2 {
 		return false
 	}
 	return true
 }
 
-func updateWeaponPosition(p *Player, w *Weapon, direction float64, radius float64) {
-	// Only update weapon position if it belongs to the player
-	if w.OwnerID == p.ID {
-		w.X = p.X + math.Cos(direction)*radius
-		w.Y = p.Y + math.Sin(direction)*radius
+// Health component for entities with health
+type HealthComponent struct {
+	Health      int
+	MaxHealth   int
+	lastHitById map[int]time.Time
+}
+
+// TakeDamage reduces health by the given amount
+func (h *HealthComponent) TakeDamage(damage int) {
+	h.Health -= damage
+	if h.Health < 0 {
+		h.Health = 0
 	}
 }
 
-func updatePlayerPosition(p *Player, direction float64, speed float64) {
+// IsDead returns true if health is 0 or less
+func (h *HealthComponent) IsDead() bool {
+	return h.Health <= 0
+}
+
+// Check hit cooldown
+func (h *HealthComponent) CheckHitCooldown(weaponID int) bool {
+	lastHitTime, hit := h.lastHitById[weaponID]
+	if !hit || time.Since(lastHitTime) >= weaponHitCooldown {
+		h.lastHitById[weaponID] = time.Now()
+		return true
+	}
+	return false
+}
+
+// Movement component for entities that move
+type MovementComponent struct {
+	Speed     float64
+	Direction float64
+}
+
+// AttackComponent for entities that can attack
+type AttackComponent struct {
+	Damage int
+}
+
+// Player represents a user-controlled character
+type Player struct {
+	Entity
+	HealthComponent
+	MovementComponent
+	WeaponRotationAngle float64
+	WeaponRotationSpeed float64
+	Weapons             []*Weapon
+	Client              *Client
+}
+
+// Move updates the player's position based on direction and speed
+func (p *Player) Move(deltaTime float64) {
 	// Calculate new position
-	newX := p.X + math.Cos(direction)*speed
-	newY := p.Y + math.Sin(direction)*speed
+	newX := p.X + math.Cos(p.Direction)*p.Speed*deltaTime
+	newY := p.Y + math.Sin(p.Direction)*p.Speed*deltaTime
 
 	// Apply boundary constraints
-	// Calculate half width/height for player boundaries
 	halfWidth := p.Width / 2
 	halfHeight := p.Height / 2
 
@@ -131,77 +162,263 @@ func updatePlayerPosition(p *Player, direction float64, speed float64) {
 	p.Y = newY
 }
 
-// 假設 players 是所有玩家的集合
-func (g *Game) checkCollisions(hub *Hub) {
-	now := time.Now()
+// CollectItem handles item collection for the player
+func (p *Player) CollectItem(item *Item) {
+	// Implemented by specific item types
+}
 
-	for _, p := range g.Players {
-		// 遍歷該玩家所有武器
-		for _, w := range p.Weapons {
-			// 檢查此武器是否碰撞到其他玩家
-			for _, other := range g.Players {
-				// 排除自己的武器碰撞自己
-				if other.ID == w.OwnerID {
-					continue
-				}
+// Weapon represents a player's weapon
+type Weapon struct {
+	Entity
+	OwnerID int
+	AttackComponent
+	RotationAngle float64
+}
 
-				// Check for collision
-				if RectCollision(w.X, w.Y, w.Width, w.Height, other.X, other.Y, other.Width, other.Height) {
-					// Generate a weapon ID that combines owner and weapon index to uniquely identify weapons
-					weaponID := w.ID
+// Monster represents an enemy in the game
+type Monster struct {
+	Entity
+	HealthComponent
+	MovementComponent
+	AttackComponent
+	DropRate float64
+}
 
-					// Check cooldown - only apply damage if enough time has passed since last hit
-					lastHitTime, hit := other.lastHitByWeapon[weaponID]
-					if !hit || now.Sub(lastHitTime) >= weaponHitCooldown {
-						// Update the last hit time
-						other.lastHitByWeapon[weaponID] = now
+// Move updates the monster's position
+func (m *Monster) Move(deltaTime float64) {
+	// Simple random movement
+	newX := m.X + math.Cos(m.Direction)*m.Speed*deltaTime
+	newY := m.Y + math.Sin(m.Direction)*m.Speed*deltaTime
 
-						// Apply damage
-						other.Health -= w.Damage
+	// Apply boundary constraints
+	halfWidth := m.Width / 2
+	halfHeight := m.Height / 2
 
-						// log.Printf("Player %d 被 Player %d 的武器擊中，扣除 %d 點血，剩餘血量：%d\n",
-						// 	other.ID, w.OwnerID, w.Damage, other.Health)
+	// Constrain X position
+	if newX-halfWidth < gameMinX {
+		newX = gameMinX + halfWidth
+		m.Direction = math.Pi - m.Direction // Bounce
+	} else if newX+halfWidth > gameMaxX {
+		newX = gameMaxX - halfWidth
+		m.Direction = math.Pi - m.Direction // Bounce
+	}
 
-						// Create hit notification
-						hitNotification, err := json.Marshal(map[string]interface{}{
-							"type":            "playerHit",
-							"from":            w.OwnerID,
-							"to":              other.ID,
-							"damage":          w.Damage,
-							"remainingHealth": other.Health,
-						})
-						if err != nil {
-							log.Println("error marshalling player hit info", err)
-							continue
-						}
+	// Constrain Y position
+	if newY-halfHeight < gameMinY {
+		newY = gameMinY + halfHeight
+		m.Direction = -m.Direction // Bounce
+	} else if newY+halfHeight > gameMaxY {
+		newY = gameMaxY - halfHeight
+		m.Direction = -m.Direction // Bounce
+	}
 
-						// Send hit notifications only if clients are not nil
-						if p.Client != nil {
-							p.Client.send <- hitNotification
-						}
-						if other.Client != nil {
-							other.Client.send <- hitNotification
-						}
+	// Update monster position
+	m.X = newX
+	m.Y = newY
 
-						// log.Printf("Hit notification sent: Player %d hit Player %d for %d damage",
-						// 	w.OwnerID, other.ID, w.Damage)
-					}
-				}
+	// Occasionally change direction
+	if rand.Float64() < 0.01 {
+		m.Direction = rand.Float64() * 2 * math.Pi
+	}
+}
+
+// HealingPotion represents a health recovery item
+type HealingPotion struct {
+	Entity
+	Amount int
+}
+
+// OnCollect handles what happens when the potion is collected
+func (h *HealingPotion) OnCollect(collector ItemCollector) {
+	if player, ok := collector.(*Player); ok {
+		oldHealth := player.Health
+		player.Health += h.Amount
+		if player.Health > player.MaxHealth {
+			player.Health = player.MaxHealth
+		}
+
+		// Notify player about potion collection if possible
+		if player.Client != nil {
+			potionNotification, err := json.Marshal(map[string]interface{}{
+				"type":         "potionCollected",
+				"playerID":     player.ID,
+				"potionID":     h.ID,
+				"amount":       h.Amount,
+				"healedAmount": player.Health - oldHealth,
+				"newHealth":    player.Health,
+			})
+			if err == nil {
+				player.Client.send <- potionNotification
 			}
 		}
 	}
 }
 
-// Release player ID when removed
-// If skipLock is true, assumes the mutex is already locked
+// Game represents the game state and systems
+type Game struct {
+	Players        []*Player
+	Monsters       []*Monster
+	HealingPotions []*HealingPotion
+	mu             sync.Mutex
+	usedIDs        map[string]map[int]bool // Tracks used IDs by type (player, monster, potion)
+}
+
+// newGame creates a new game instance
+func newGame() *Game {
+	g := &Game{
+		Players:        []*Player{},
+		Monsters:       []*Monster{},
+		HealingPotions: []*HealingPotion{},
+		usedIDs:        make(map[string]map[int]bool),
+	}
+	g.usedIDs["player"] = make(map[int]bool)
+	g.usedIDs["monster"] = make(map[int]bool)
+	g.usedIDs["potion"] = make(map[int]bool)
+	g.usedIDs["weapon"] = make(map[int]bool)
+	return g
+}
+
+// generateID generates a unique ID for a given entity type
+func (g *Game) generateID(entityType string) int {
+	var id int
+	for {
+		id = int(time.Now().UnixNano() % 1000000000)
+		if !g.usedIDs[entityType][id] {
+			g.usedIDs[entityType][id] = true
+			return id
+		}
+		time.Sleep(time.Nanosecond)
+	}
+}
+
+// releaseID releases an ID when an entity is removed
+func (g *Game) releaseID(entityType string, id int) {
+	delete(g.usedIDs[entityType], id)
+}
+
+// addNewPlayer creates and adds a new player to the game
+func (g *Game) addNewPlayer(client *Client) *Player {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	id := g.generateID("player")
+
+	player := &Player{
+		Entity: Entity{
+			ID:     id,
+			X:      100,
+			Y:      100,
+			Width:  10,
+			Height: 20,
+		},
+		HealthComponent: HealthComponent{
+			Health:      100,
+			MaxHealth:   100,
+			lastHitById: make(map[int]time.Time),
+		},
+		MovementComponent: MovementComponent{
+			Speed:     100,
+			Direction: 0,
+		},
+		WeaponRotationAngle: 0,
+		WeaponRotationSpeed: 1,
+		Client:              client,
+		Weapons:             []*Weapon{},
+	}
+
+	// Generate two weapons
+	for i := 0; i < 2; i++ {
+		player.Weapons = append(player.Weapons, g.newWeapon(player))
+	}
+
+	g.Players = append(g.Players, player)
+	log.Printf("New player %d added to game", id)
+	return player
+}
+
+// newWeapon creates a new weapon for a player
+func (g *Game) newWeapon(owner *Player) *Weapon {
+	weaponID := g.generateID("weapon")
+
+	return &Weapon{
+		Entity: Entity{
+			ID:     weaponID,
+			X:      owner.X,
+			Y:      owner.Y,
+			Width:  10,
+			Height: 20,
+		},
+		OwnerID: owner.ID,
+		AttackComponent: AttackComponent{
+			Damage: 10,
+		},
+	}
+}
+
+// spawnMonster creates and adds a new monster to the game
+func (g *Game) spawnMonster(skipLock bool) *Monster {
+	if !skipLock {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+	}
+
+	id := g.generateID("monster")
+	monster := &Monster{
+		Entity: Entity{
+			ID:     id,
+			X:      gameMinX + 50 + rand.Float64()*(gameMaxX-gameMinX-100),
+			Y:      gameMinY + 50 + rand.Float64()*(gameMaxY-gameMinY-100),
+			Width:  20,
+			Height: 20,
+		},
+		HealthComponent: HealthComponent{
+			Health:      60,
+			MaxHealth:   60,
+			lastHitById: make(map[int]time.Time),
+		},
+		MovementComponent: MovementComponent{
+			Speed:     30,
+			Direction: rand.Float64() * 2 * math.Pi,
+		},
+		AttackComponent: AttackComponent{
+			Damage: 20,
+		},
+		DropRate: 0.75,
+	}
+	g.Monsters = append(g.Monsters, monster)
+	return monster
+}
+
+// spawnHealingPotion creates and adds a new healing potion to the game
+func (g *Game) spawnHealingPotion(x, y float64, skipLock bool) *HealingPotion {
+	if !skipLock {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+	}
+
+	id := g.generateID("potion")
+	potion := &HealingPotion{
+		Entity: Entity{
+			ID:     id,
+			X:      x,
+			Y:      y,
+			Width:  12,
+			Height: 12,
+		},
+		Amount: 25,
+	}
+	g.HealingPotions = append(g.HealingPotions, potion)
+	return potion
+}
+
+// removePlayer removes a player from the game
 func (g *Game) removePlayer(playerID int, skipLock bool) {
 	if !skipLock {
 		g.mu.Lock()
 		defer g.mu.Unlock()
 	}
 
-	// Remove the player ID from used IDs
-	delete(g.usedPlayerIDs, playerID)
+	g.releaseID("player", playerID)
 
 	for i, player := range g.Players {
 		if player.ID == playerID {
@@ -218,226 +435,72 @@ func (g *Game) removePlayer(playerID int, skipLock bool) {
 	}
 }
 
-func (g *Game) removeDeadPlayers() {
-	// Don't acquire the mutex here as it's already locked in the game loop
-	removePlayers := []*Player{}
-	for _, p := range g.Players {
-		if p.Health <= 0 {
-			removePlayers = append(removePlayers, p)
-		}
-	}
+// CollisionSystem handles collisions between different game entities
+type CollisionSystem struct {
+	game *Game
+	hub  *Hub
+}
 
-	if len(removePlayers) > 0 {
-		for _, p := range removePlayers {
-			// Only send death notification if Client is not nil
-			if p.Client != nil {
-				deathNotification, err := json.Marshal(map[string]interface{}{
-					"type":     "playerDeath",
-					"playerID": p.ID,
-				})
-				if err == nil {
-					p.Client.send <- deathNotification
+// NewCollisionSystem creates a new collision system
+func NewCollisionSystem(game *Game, hub *Hub) *CollisionSystem {
+	return &CollisionSystem{game: game, hub: hub}
+}
+
+// Update checks and handles all game collisions
+func (cs *CollisionSystem) Update() {
+	cs.checkWeaponCollisions()
+	cs.checkMonsterPlayerCollisions()
+	cs.checkPlayerPotionCollisions()
+}
+
+// checkWeaponCollisions handles weapon-to-player collisions and weapon-to-monster collisions
+func (cs *CollisionSystem) checkWeaponCollisions() {
+
+	for _, p := range cs.game.Players {
+		for _, w := range p.Weapons {
+			for _, other := range cs.game.Players {
+				if other.ID == w.OwnerID {
+					continue // Skip owner
+				}
+
+				if w.CheckCollision(other.GetEntity()) {
+					// Check cooldown
+					weaponID := w.ID
+					if other.CheckHitCooldown(weaponID) {
+						other.TakeDamage(w.Damage)
+
+						// Create hit notification
+						hitNotification, err := json.Marshal(map[string]interface{}{
+							"type":            "playerHit",
+							"from":            w.OwnerID,
+							"to":              other.ID,
+							"damage":          w.Damage,
+							"remainingHealth": other.Health,
+						})
+						if err == nil {
+							if p.Client != nil {
+								p.Client.send <- hitNotification
+							}
+							if other.Client != nil {
+								other.Client.send <- hitNotification
+							}
+						}
+					}
 				}
 			}
-
-			// Remove the player (skip locking as mutex is already locked)
-			g.removePlayer(p.ID, true)
-		}
-	}
-}
-
-func newGame() *Game {
-	return &Game{
-		Players:        []*Player{},
-		Monsters:       []*Monster{},
-		HealingPotions: []*HealingPotion{},
-		usedPlayerIDs:  make(map[int]bool),
-		usedMonsterIDs: make(map[int]bool),
-		usedPotionIDs:  make(map[int]bool),
-	}
-}
-
-// Generate a unique player ID that hasn't been used before
-func (g *Game) generateUniquePlayerID() int {
-	var id int
-	for {
-		id = int(time.Now().UnixNano() % 1000000000)
-		if !g.usedPlayerIDs[id] {
-			return id
-		}
-		time.Sleep(time.Nanosecond)
-	}
-}
-
-// Add a new player with a unique ID to the game and return it
-func (g *Game) addNewPlayer(client *Client) *Player {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	id := g.generateUniquePlayerID()
-	g.usedPlayerIDs[id] = true
-
-	player := &Player{
-		ID:                  id,
-		X:                   100,
-		Y:                   100,
-		Width:               10,
-		Height:              20,
-		Health:              100,
-		Direction:           0,
-		Speed:               100,
-		WeaponRotationAngle: 0,
-		WeaponRotationSpeed: 1,
-		lastHitByWeapon:     make(map[int]time.Time), // Initialize the last hit map
-		Client:              client,
-	}
-
-	// Generate two weapons
-	weapons := []*Weapon{}
-	for range 2 {
-		weapons = append(weapons, newWeapon(player))
-	}
-	player.Weapons = weapons
-
-	g.Players = append(g.Players, player)
-
-	log.Printf("New player %d added to game", id)
-	return player
-}
-
-func newWeapon(owner *Player) *Weapon {
-
-	// Create a unique weapon ID based on owner ID and weapon index
-
-	index := len(owner.Weapons)
-
-	weaponID := owner.ID*100 + index
-
-	return &Weapon{
-		ID:      weaponID,
-		OwnerID: owner.ID,
-		X:       owner.X,
-		Y:       owner.Y,
-		Width:   10,
-		Height:  20,
-		Damage:  40,
-	}
-}
-
-// Generate a unique monster ID that hasn't been used before
-func (g *Game) generateUniqueMonsterID() int {
-	var id int
-	for {
-		id = int(time.Now().UnixNano() % 1000000000)
-		if !g.usedMonsterIDs[id] {
-			return id
-		}
-		time.Sleep(time.Nanosecond)
-	}
-}
-
-// Spawn a monster at a random location
-// If skipLock is true, assumes the mutex is already locked
-func (g *Game) spawnMonster(skipLock bool) *Monster {
-	if !skipLock {
-		g.mu.Lock()
-		defer g.mu.Unlock()
-	}
-	id := g.generateUniqueMonsterID()
-	g.usedMonsterIDs[id] = true
-	monster := &Monster{
-		ID:        id,
-		X:         gameMinX + 50 + rand.Float64()*(gameMaxX-gameMinX-100),
-		Y:         gameMinY + 50 + rand.Float64()*(gameMaxY-gameMinY-100),
-		Width:     20,
-		Height:    20,
-		Health:    60,
-		MaxHealth: 60,
-		Speed:     30,
-	}
-	g.Monsters = append(g.Monsters, monster)
-	return monster
-}
-
-// Generate a unique potion ID that hasn't been used before
-func (g *Game) generateUniquePotionID() int {
-	var id int
-	for {
-		id = int(time.Now().UnixNano() % 1000000000)
-		if !g.usedPotionIDs[id] {
-			return id
-		}
-		time.Sleep(time.Nanosecond)
-	}
-}
-
-// Spawn a healing potion at the given location
-// If skipLock is true, assumes the mutex is already locked
-func (g *Game) spawnHealingPotion(x, y float64, skipLock bool) *HealingPotion {
-	if !skipLock {
-		g.mu.Lock()
-		defer g.mu.Unlock()
-	}
-	id := g.generateUniquePotionID()
-	g.usedPotionIDs[id] = true
-	potion := &HealingPotion{
-		ID:     id,
-		X:      x,
-		Y:      y,
-		Width:  12,
-		Height: 12,
-		Amount: 40,
-	}
-	g.HealingPotions = append(g.HealingPotions, potion)
-	return potion
-}
-
-// Remove dead monsters and drop healing potions
-// If skipLock is true, assumes the mutex is already locked
-func (g *Game) removeDeadMonstersAndDropPotions(skipLock bool) {
-	if !skipLock {
-		g.mu.Lock()
-		defer g.mu.Unlock()
-	}
-	remaining := []*Monster{}
-	for _, m := range g.Monsters {
-		if m.Health <= 0 {
-			// Drop a healing potion at monster's position
-			g.spawnHealingPotion(m.X, m.Y, true) // Skip lock since we're already locked
-			delete(g.usedMonsterIDs, m.ID)
-			continue
-		}
-		remaining = append(remaining, m)
-	}
-	g.Monsters = remaining
-}
-
-// Update monster logic (simple AI: move randomly or stay still for now)
-func (g *Game) updateMonsters(deltaTime float64) {
-	// For now, monsters do not move. You can add movement logic here.
-	for _, m := range g.Monsters {
-		m.X += rand.Float64() * 10 * deltaTime
-		m.Y += rand.Float64() * 10 * deltaTime
-
-	}
-
-}
-
-// Check for collisions between player weapons and monsters
-func (g *Game) checkMonsterCollisions(hub *Hub) {
-	for _, p := range g.Players {
-		for _, w := range p.Weapons {
-			for _, m := range g.Monsters {
-				if m.Health > 0 && RectCollision(w.X, w.Y, w.Width, w.Height, m.X, m.Y, m.Width, m.Height) {
+			for _, m := range cs.game.Monsters {
+				if m.Health > 0 && w.CheckCollision(m.GetEntity()) {
+					if !m.CheckHitCooldown(w.ID) {
+						continue
+					}
 					// Apply damage
-					m.Health -= w.Damage
+					m.TakeDamage(w.Damage)
 
 					// Only notify client if it exists
 					if p.Client != nil {
 						// Determine if monster was killed by this hit
-						monsterKilled := m.Health <= 0
 						status := "hit"
-						if monsterKilled {
+						if m.IsDead() {
 							status = "killed"
 						}
 
@@ -460,18 +523,46 @@ func (g *Game) checkMonsterCollisions(hub *Hub) {
 	}
 }
 
-// Check for collisions between players and healing potions
-func (g *Game) checkPotionCollisions(hub *Hub) {
+// checkMonsterPlayerCollisions handles monster-to-player collisions
+func (cs *CollisionSystem) checkMonsterPlayerCollisions() {
+	for _, m := range cs.game.Monsters {
+		for _, p := range cs.game.Players {
+			if m.Health > 0 && m.CheckCollision(p.GetEntity()) {
+				if !p.CheckHitCooldown(m.ID) {
+					continue
+				}
+				// Apply damage
+				p.TakeDamage(m.Damage)
+
+				// Only notify client if it exists
+				if p.Client != nil {
+					hitNotification, err := json.Marshal(map[string]interface{}{
+						"type":            "playerHit",
+						"from":            m.ID,
+						"to":              p.ID,
+						"damage":          m.Damage,
+						"remainingHealth": p.Health,
+					})
+					if err == nil {
+						p.Client.send <- hitNotification
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkPlayerPotionCollisions handles player-to-potion collisions
+func (cs *CollisionSystem) checkPlayerPotionCollisions() {
 	remainingPotions := []*HealingPotion{}
-	for _, potion := range g.HealingPotions {
+	for _, potion := range cs.game.HealingPotions {
 		collected := false
-		for _, p := range g.Players {
-			if RectCollision(p.X, p.Y, p.Width, p.Height, potion.X, potion.Y, potion.Width, potion.Height) {
-				// Heal the player
+		for _, p := range cs.game.Players {
+			if potion.CheckCollision(p.GetEntity()) {
 				oldHealth := p.Health
 				p.Health += potion.Amount
-				if p.Health > 100 {
-					p.Health = 100
+				if p.Health > p.MaxHealth {
+					p.Health = p.MaxHealth
 				}
 
 				// Notify player about potion collection
@@ -489,7 +580,7 @@ func (g *Game) checkPotionCollisions(hub *Hub) {
 					}
 				}
 
-				delete(g.usedPotionIDs, potion.ID)
+				cs.game.releaseID("potion", potion.ID)
 				collected = true
 				break
 			}
@@ -498,58 +589,148 @@ func (g *Game) checkPotionCollisions(hub *Hub) {
 			remainingPotions = append(remainingPotions, potion)
 		}
 	}
-	g.HealingPotions = remainingPotions
+	cs.game.HealingPotions = remainingPotions
 }
 
-// Update the game loop to handle monsters and potions, passing skipLock=true
+// MonsterSystem handles monster spawning, updates, and cleanup
+type MonsterSystem struct {
+	game *Game
+}
+
+// NewMonsterSystem creates a new monster system
+func NewMonsterSystem(game *Game) *MonsterSystem {
+	return &MonsterSystem{game: game}
+}
+
+// Update updates all monsters and handles spawning and removal
+func (ms *MonsterSystem) Update(deltaTime float64) {
+	// Spawn monsters if needed (1 monster per player)
+	for len(ms.game.Monsters) < len(ms.game.Players)*playerMasterRatio+baseMonsterAmount && len(ms.game.Monsters) < maxMonsterAmount {
+		ms.game.spawnMonster(true)
+	}
+
+	// Update monster positions
+	for _, m := range ms.game.Monsters {
+		m.Move(deltaTime)
+	}
+
+	// Remove dead monsters and drop potions
+	ms.removeDeadMonsters()
+}
+
+// removeDeadMonsters removes dead monsters and drops healing potions
+func (ms *MonsterSystem) removeDeadMonsters() {
+	remaining := []*Monster{}
+	for _, m := range ms.game.Monsters {
+		if m.IsDead() {
+			// Drop a healing potion at monster's position
+			if rand.Float64() < m.DropRate {
+				ms.game.spawnHealingPotion(m.X, m.Y, true)
+			}
+			ms.game.releaseID("monster", m.ID)
+			continue
+		}
+		remaining = append(remaining, m)
+	}
+	ms.game.Monsters = remaining
+}
+
+// PlayerSystem handles player updates and cleanup
+type PlayerSystem struct {
+	game *Game
+	hub  *Hub
+}
+
+// NewPlayerSystem creates a new player system
+func NewPlayerSystem(game *Game, hub *Hub) *PlayerSystem {
+	return &PlayerSystem{game: game, hub: hub}
+}
+
+// Update updates all players and handles removal of dead players
+func (ps *PlayerSystem) Update(deltaTime float64) {
+	// Update all players
+	for _, p := range ps.game.Players {
+		// Update player position
+		p.Move(deltaTime)
+
+		// Update weapon rotation
+		p.WeaponRotationAngle += p.WeaponRotationSpeed * deltaTime
+
+		// Update weapon positions
+		weaponCount := len(p.Weapons)
+		if weaponCount > 0 {
+			angleDiff := 2 * math.Pi / float64(weaponCount)
+			for i, w := range p.Weapons {
+				weaponAngle := p.WeaponRotationAngle + float64(i)*angleDiff
+				radius := 30.0
+				w.X = p.X + math.Cos(weaponAngle)*radius
+				w.Y = p.Y + math.Sin(weaponAngle)*radius
+			}
+		}
+	}
+
+	// Remove dead players
+	ps.removeDeadPlayers()
+}
+
+// removeDeadPlayers removes players with health <= 0
+func (ps *PlayerSystem) removeDeadPlayers() {
+	removePlayers := []*Player{}
+	for _, p := range ps.game.Players {
+		if p.IsDead() {
+			removePlayers = append(removePlayers, p)
+		}
+	}
+
+	if len(removePlayers) > 0 {
+		for _, p := range removePlayers {
+			// Only send death notification if Client is not nil
+			if p.Client != nil {
+				deathNotification, err := json.Marshal(map[string]interface{}{
+					"type":     "playerDeath",
+					"playerID": p.ID,
+				})
+				if err == nil {
+					p.Client.send <- deathNotification
+				}
+			}
+
+			// Remove the player
+			ps.game.removePlayer(p.ID, true)
+		}
+	}
+}
+
+// run starts the game loop
 func (g *Game) run(fps int, hub *Hub) {
 	deltaTime := 1.0 / float64(fps)
 	ticker := time.NewTicker(time.Second / time.Duration(fps))
 	defer ticker.Stop()
 
+	// Initialize systems
+	playerSystem := NewPlayerSystem(g, hub)
+	monsterSystem := NewMonsterSystem(g)
+	collisionSystem := NewCollisionSystem(g, hub)
+
 	for range ticker.C {
 		g.mu.Lock()
-		// Update all players
-		for _, p := range g.Players {
-			updatePlayerPosition(p, p.Direction, p.Speed*deltaTime)
-			p.WeaponRotationAngle += p.WeaponRotationSpeed * deltaTime
-			weaponCount := len(p.Weapons)
-			if weaponCount > 0 {
-				angleDiff := 2 * math.Pi / float64(weaponCount)
-				for i, w := range p.Weapons {
-					weaponAngle := p.WeaponRotationAngle + float64(i)*angleDiff
-					updateWeaponPosition(p, w, weaponAngle, 30)
-				}
-			}
-		}
 
-		// --- Monster logic ---
-		// Spawn monsters if needed (1 monster per player)
-		if len(g.Monsters) < len(g.Players) {
-			for i := len(g.Monsters); i < len(g.Players); i++ {
-				g.spawnMonster(true) // Skip lock since we're already locked
-			}
-		}
-		g.updateMonsters(deltaTime)
-		g.checkMonsterCollisions(hub)
-		g.removeDeadMonstersAndDropPotions(true) // Skip lock since we're already locked
+		// Update all systems
+		playerSystem.Update(deltaTime)
+		monsterSystem.Update(deltaTime)
+		collisionSystem.Update()
 
-		// --- Potion logic ---
-		g.checkPotionCollisions(hub)
-
-		// --- Player logic ---
-		g.checkCollisions(hub)
-		g.removeDeadPlayers()
-
+		// Create copies of the game state to send to clients
 		playersCopy := make([]*Player, len(g.Players))
 		copy(playersCopy, g.Players)
 		monstersCopy := make([]*Monster, len(g.Monsters))
 		copy(monstersCopy, g.Monsters)
 		potionsCopy := make([]*HealingPotion, len(g.HealingPotions))
 		copy(potionsCopy, g.HealingPotions)
+
 		g.mu.Unlock()
 
-		// Send game state to clients (now includes monsters and potions)
+		// Send game state to clients
 		jsonData, err := json.Marshal(map[string]interface{}{
 			"type":     "gameState",
 			"players":  playersCopy,
