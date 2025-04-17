@@ -146,6 +146,28 @@ window.onload = function () {
         }
     }
     
+    // Draw a monster
+    function drawMonster(monster) {
+        ctx.fillStyle = 'red';
+        ctx.fillRect(monster.X - monster.Width / 2, monster.Y - monster.Height / 2, monster.Width, monster.Height);
+        // Draw monster health bar
+        ctx.fillStyle = 'black';
+        ctx.fillRect(monster.X - monster.Width / 2, monster.Y - monster.Height / 2 - 8, monster.Width, 4);
+        ctx.fillStyle = 'lime';
+        ctx.fillRect(monster.X - monster.Width / 2, monster.Y - monster.Height / 2 - 8, (monster.Health / monster.MaxHealth) * monster.Width, 4);
+    }
+
+    // Draw a healing potion
+    function drawPotion(potion) {
+        ctx.beginPath();
+        ctx.arc(potion.X, potion.Y, potion.Width / 2, 0, 2 * Math.PI);
+        ctx.fillStyle = 'green';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#003300';
+        ctx.stroke();
+    }
+    
     // 繪製遊戲畫面
     function drawGame() {
         // 清空畫布
@@ -153,6 +175,20 @@ window.onload = function () {
         
         // Draw background and boundary
         drawBoundary();
+        
+        // Draw monsters
+        if (gameInfo.monsters && gameInfo.monsters.length > 0) {
+            gameInfo.monsters.forEach(function(monster) {
+                drawMonster(monster);
+            });
+        }
+
+        // Draw healing potions
+        if (gameInfo.potions && gameInfo.potions.length > 0) {
+            gameInfo.potions.forEach(function(potion) {
+                drawPotion(potion);
+            });
+        }
         
         if (gameInfo.players && gameInfo.players.length > 0) {
             // 繪製所有玩家和他們的武器
@@ -214,6 +250,7 @@ window.onload = function () {
         try {
             // Get the raw message data
             const messageData = evt.data;
+            console.log("Received message:", messageData);
             
             // Check if the message might contain multiple JSON objects
             // (look for closing brace followed by opening brace pattern)
@@ -264,6 +301,14 @@ window.onload = function () {
             
             case "playerDeath":
                 handlePlayerDeath(message);
+                break;
+            
+            case "monsterHit":
+                handleMonsterHit(message);
+                break;
+                
+            case "potionCollected":
+                handlePotionCollected(message);
                 break;
                 
             default:
@@ -369,6 +414,26 @@ window.onload = function () {
         
         // Play death sound or show death animation if needed
         // ...
+    }
+
+    // Handle monster hit notification
+    function handleMonsterHit(data) {
+        // If current player hit a monster
+        if (playerID === data.playerID) {
+            if (data.status === "killed") {
+                addNotification('You killed a monster! A healing potion dropped.', '#FFA500');
+            } else {
+                addNotification('You hit a monster for ' + data.damage + ' damage!', '#FFFF00');
+            }
+        }
+    }
+    
+    // Handle potion collection
+    function handlePotionCollected(data) {
+        // If current player collected a potion
+        if (playerID === data.playerID) {
+            addNotification('You collected a healing potion! +' + data.healedAmount + ' HP', '#32CD32');
+        }
     }
 };
 </script>

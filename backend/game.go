@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"math"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -19,10 +20,36 @@ const (
 	gameMaxY = 800
 )
 
+// Monster represents a neutral enemy in the game world
+// that can be attacked by players and drops a healing potion upon death.
+type Monster struct {
+	ID        int
+	X, Y      float64
+	Width     float64
+	Height    float64
+	Health    int
+	MaxHealth int
+	Speed     float64
+	Direction float64
+}
+
+// HealingPotion represents a health recovery item dropped by monsters.
+type HealingPotion struct {
+	ID     int
+	X, Y   float64
+	Width  float64
+	Height float64
+	Amount int // Amount of health restored
+}
+
 type Game struct {
-	Players       []*Player
-	mu            sync.Mutex   // Mutex to protect concurrent access to Players
-	usedPlayerIDs map[int]bool // Track used player IDs
+	Players        []*Player
+	Monsters       []*Monster
+	HealingPotions []*HealingPotion
+	mu             sync.Mutex   // Mutex to protect concurrent access to Players
+	usedPlayerIDs  map[int]bool // Track used player IDs
+	usedMonsterIDs map[int]bool // Track used monster IDs
+	usedPotionIDs  map[int]bool // Track used potion IDs
 }
 
 type Player struct {
@@ -66,133 +93,6 @@ func RectCollision(x1, y1, w1, h1, x2, y2, w2, h2 float64) bool {
 	}
 	return true
 }
-
-// // 考慮旋轉的碰撞檢測
-// func RotatedRectCollision(x1, y1, w1, h1, angle1, x2, y2, w2, h2, angle2 float64) bool {
-// 	// 如果兩個矩形都沒有旋轉，使用簡單的矩形碰撞檢測
-// 	if angle1 == 0 && angle2 == 0 {
-// 		return RectCollision(x1, y1, w1, h1, x2, y2, w2, h2)
-// 	}
-
-// 	// 計算第一個矩形的四個角點
-// 	corners1 := calculateCorners(x1, y1, w1, h1, angle1)
-
-// 	// 計算第二個矩形的四個角點
-// 	corners2 := calculateCorners(x2, y2, w2, h2, angle2)
-
-// 	// 使用分離軸定理(SAT)檢測兩個旋轉矩形是否碰撞
-// 	return checkSATCollision(corners1, corners2)
-// }
-
-// // 計算旋轉後矩形的四個角點
-// func calculateCorners(x, y, width, height, direction float64) [][2]float64 {
-// 	// 矩形中心點
-// 	centerX := x + width/2
-// 	centerY := y + height/2
-
-// 	// 未旋轉時的四個角點（相對於中心點）
-// 	halfW := width / 2
-// 	halfH := height / 2
-// 	corners := [][2]float64{
-// 		{-halfW, -halfH}, // 左上
-// 		{halfW, -halfH},  // 右上
-// 		{halfW, halfH},   // 右下
-// 		{-halfW, halfH},  // 左下
-// 	}
-
-// 	// 旋轉並平移每個角點
-// 	rotatedCorners := make([][2]float64, 4)
-// 	cos := math.Cos(direction)
-// 	sin := math.Sin(direction)
-
-// 	for i, corner := range corners {
-// 		// 旋轉
-// 		rotatedX := corner[0]*cos - corner[1]*sin
-// 		rotatedY := corner[0]*sin + corner[1]*cos
-
-// 		// 平移回絕對座標
-// 		rotatedCorners[i] = [2]float64{centerX + rotatedX, centerY + rotatedY}
-// 	}
-
-// 	return rotatedCorners
-// }
-
-// // 使用分離軸定理檢測碰撞
-// func checkSATCollision(corners1, corners2 [][2]float64) bool {
-// 	// 檢查第一個矩形的邊作為投影軸
-// 	for i := 0; i < 4; i++ {
-// 		j := (i + 1) % 4
-// 		axisX := corners1[j][0] - corners1[i][0]
-// 		axisY := corners1[j][1] - corners1[i][1]
-
-// 		// 法向量（垂直於邊的向量）
-// 		normalX := -axisY
-// 		normalY := axisX
-
-// 		// 如果在這個軸上有間隙，則沒有碰撞
-// 		if hasGap(corners1, corners2, normalX, normalY) {
-// 			return false
-// 		}
-// 	}
-
-// 	// 檢查第二個矩形的邊作為投影軸
-// 	for i := 0; i < 4; i++ {
-// 		j := (i + 1) % 4
-// 		axisX := corners2[j][0] - corners2[i][0]
-// 		axisY := corners2[j][1] - corners2[i][1]
-
-// 		// 法向量
-// 		normalX := -axisY
-// 		normalY := axisX
-
-// 		// 如果在這個軸上有間隙，則沒有碰撞
-// 		if hasGap(corners1, corners2, normalX, normalY) {
-// 			return false
-// 		}
-// 	}
-
-// 	// 所有軸都沒有間隙，表示有碰撞
-// 	return true
-// }
-
-// // 檢查在給定軸上是否有間隙
-// func hasGap(corners1, corners2 [][2]float64, axisX, axisY float64) bool {
-// 	// 標準化軸向量
-// 	length := math.Sqrt(axisX*axisX + axisY*axisY)
-// 	if length > 0 {
-// 		axisX /= length
-// 		axisY /= length
-// 	}
-
-// 	// 計算第一個矩形在軸上的投影
-// 	min1, max1 := projectCorners(corners1, axisX, axisY)
-
-// 	// 計算第二個矩形在軸上的投影
-// 	min2, max2 := projectCorners(corners2, axisX, axisY)
-
-// 	// 檢查投影是否有間隙
-// 	return max1 < min2 || max2 < min1
-// }
-
-// // 將角點投影到軸上並返回最小和最大值
-// func projectCorners(corners [][2]float64, axisX, axisY float64) (float64, float64) {
-// 	min := math.Inf(1)
-// 	max := math.Inf(-1)
-
-// 	for _, corner := range corners {
-// 		// 點積計算投影值
-// 		projection := corner[0]*axisX + corner[1]*axisY
-
-// 		if projection < min {
-// 			min = projection
-// 		}
-// 		if projection > max {
-// 			max = projection
-// 		}
-// 	}
-
-// 	return min, max
-// }
 
 func updateWeaponPosition(p *Player, w *Weapon, direction float64, radius float64) {
 	// Only update weapon position if it belongs to the player
@@ -318,7 +218,7 @@ func (g *Game) removePlayer(playerID int, skipLock bool) {
 	}
 }
 
-func (g *Game) removeDeadPlayers(hub *Hub) {
+func (g *Game) removeDeadPlayers() {
 	// Don't acquire the mutex here as it's already locked in the game loop
 	removePlayers := []*Player{}
 	for _, p := range g.Players {
@@ -348,33 +248,34 @@ func (g *Game) removeDeadPlayers(hub *Hub) {
 
 func newGame() *Game {
 	return &Game{
-		Players:       []*Player{},
-		usedPlayerIDs: make(map[int]bool),
+		Players:        []*Player{},
+		Monsters:       []*Monster{},
+		HealingPotions: []*HealingPotion{},
+		usedPlayerIDs:  make(map[int]bool),
+		usedMonsterIDs: make(map[int]bool),
+		usedPotionIDs:  make(map[int]bool),
 	}
 }
 
 // Generate a unique player ID that hasn't been used before
 func (g *Game) generateUniquePlayerID() int {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	// Try to find an unused ID
 	var id int
 	for {
-		// Generate a random ID between 1 and 1,000,000,000
 		id = int(time.Now().UnixNano() % 1000000000)
 		if !g.usedPlayerIDs[id] {
-			g.usedPlayerIDs[id] = true
 			return id
 		}
-		// In the unlikely case of a collision, we'll generate a new ID
 		time.Sleep(time.Nanosecond)
 	}
 }
 
 // Add a new player with a unique ID to the game and return it
 func (g *Game) addNewPlayer(client *Client) *Player {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	id := g.generateUniquePlayerID()
+	g.usedPlayerIDs[id] = true
 
 	player := &Player{
 		ID:                  id,
@@ -398,10 +299,7 @@ func (g *Game) addNewPlayer(client *Client) *Player {
 	}
 	player.Weapons = weapons
 
-	// Add the player to the game
-	g.mu.Lock()
 	g.Players = append(g.Players, player)
-	g.mu.Unlock()
 
 	log.Printf("New player %d added to game", id)
 	return player
@@ -426,6 +324,184 @@ func newWeapon(owner *Player) *Weapon {
 	}
 }
 
+// Generate a unique monster ID that hasn't been used before
+func (g *Game) generateUniqueMonsterID() int {
+	var id int
+	for {
+		id = int(time.Now().UnixNano() % 1000000000)
+		if !g.usedMonsterIDs[id] {
+			return id
+		}
+		time.Sleep(time.Nanosecond)
+	}
+}
+
+// Spawn a monster at a random location
+// If skipLock is true, assumes the mutex is already locked
+func (g *Game) spawnMonster(skipLock bool) *Monster {
+	if !skipLock {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+	}
+	id := g.generateUniqueMonsterID()
+	g.usedMonsterIDs[id] = true
+	monster := &Monster{
+		ID:        id,
+		X:         gameMinX + 50 + rand.Float64()*(gameMaxX-gameMinX-100),
+		Y:         gameMinY + 50 + rand.Float64()*(gameMaxY-gameMinY-100),
+		Width:     20,
+		Height:    20,
+		Health:    60,
+		MaxHealth: 60,
+		Speed:     30,
+	}
+	g.Monsters = append(g.Monsters, monster)
+	return monster
+}
+
+// Generate a unique potion ID that hasn't been used before
+func (g *Game) generateUniquePotionID() int {
+	var id int
+	for {
+		id = int(time.Now().UnixNano() % 1000000000)
+		if !g.usedPotionIDs[id] {
+			return id
+		}
+		time.Sleep(time.Nanosecond)
+	}
+}
+
+// Spawn a healing potion at the given location
+// If skipLock is true, assumes the mutex is already locked
+func (g *Game) spawnHealingPotion(x, y float64, skipLock bool) *HealingPotion {
+	if !skipLock {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+	}
+	id := g.generateUniquePotionID()
+	g.usedPotionIDs[id] = true
+	potion := &HealingPotion{
+		ID:     id,
+		X:      x,
+		Y:      y,
+		Width:  12,
+		Height: 12,
+		Amount: 40,
+	}
+	g.HealingPotions = append(g.HealingPotions, potion)
+	return potion
+}
+
+// Remove dead monsters and drop healing potions
+// If skipLock is true, assumes the mutex is already locked
+func (g *Game) removeDeadMonstersAndDropPotions(skipLock bool) {
+	if !skipLock {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+	}
+	remaining := []*Monster{}
+	for _, m := range g.Monsters {
+		if m.Health <= 0 {
+			// Drop a healing potion at monster's position
+			g.spawnHealingPotion(m.X, m.Y, true) // Skip lock since we're already locked
+			delete(g.usedMonsterIDs, m.ID)
+			continue
+		}
+		remaining = append(remaining, m)
+	}
+	g.Monsters = remaining
+}
+
+// Update monster logic (simple AI: move randomly or stay still for now)
+func (g *Game) updateMonsters(deltaTime float64) {
+	// For now, monsters do not move. You can add movement logic here.
+	for _, m := range g.Monsters {
+		m.X += rand.Float64() * 10 * deltaTime
+		m.Y += rand.Float64() * 10 * deltaTime
+
+	}
+
+}
+
+// Check for collisions between player weapons and monsters
+func (g *Game) checkMonsterCollisions(hub *Hub) {
+	for _, p := range g.Players {
+		for _, w := range p.Weapons {
+			for _, m := range g.Monsters {
+				if m.Health > 0 && RectCollision(w.X, w.Y, w.Width, w.Height, m.X, m.Y, m.Width, m.Height) {
+					// Apply damage
+					m.Health -= w.Damage
+
+					// Only notify client if it exists
+					if p.Client != nil {
+						// Determine if monster was killed by this hit
+						monsterKilled := m.Health <= 0
+						status := "hit"
+						if monsterKilled {
+							status = "killed"
+						}
+
+						// Create monster hit notification
+						hitNotification, err := json.Marshal(map[string]interface{}{
+							"type":          "monsterHit",
+							"playerID":      p.ID,
+							"monsterID":     m.ID,
+							"damage":        w.Damage,
+							"monsterHealth": m.Health,
+							"status":        status,
+						})
+						if err == nil {
+							p.Client.send <- hitNotification
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// Check for collisions between players and healing potions
+func (g *Game) checkPotionCollisions(hub *Hub) {
+	remainingPotions := []*HealingPotion{}
+	for _, potion := range g.HealingPotions {
+		collected := false
+		for _, p := range g.Players {
+			if RectCollision(p.X, p.Y, p.Width, p.Height, potion.X, potion.Y, potion.Width, potion.Height) {
+				// Heal the player
+				oldHealth := p.Health
+				p.Health += potion.Amount
+				if p.Health > 100 {
+					p.Health = 100
+				}
+
+				// Notify player about potion collection
+				if p.Client != nil {
+					potionNotification, err := json.Marshal(map[string]interface{}{
+						"type":         "potionCollected",
+						"playerID":     p.ID,
+						"potionID":     potion.ID,
+						"amount":       potion.Amount,
+						"healedAmount": p.Health - oldHealth,
+						"newHealth":    p.Health,
+					})
+					if err == nil {
+						p.Client.send <- potionNotification
+					}
+				}
+
+				delete(g.usedPotionIDs, potion.ID)
+				collected = true
+				break
+			}
+		}
+		if !collected {
+			remainingPotions = append(remainingPotions, potion)
+		}
+	}
+	g.HealingPotions = remainingPotions
+}
+
+// Update the game loop to handle monsters and potions, passing skipLock=true
 func (g *Game) run(fps int, hub *Hub) {
 	deltaTime := 1.0 / float64(fps)
 	ticker := time.NewTicker(time.Second / time.Duration(fps))
@@ -436,36 +512,49 @@ func (g *Game) run(fps int, hub *Hub) {
 		// Update all players
 		for _, p := range g.Players {
 			updatePlayerPosition(p, p.Direction, p.Speed*deltaTime)
-
-			// 更新武器旋轉角度
 			p.WeaponRotationAngle += p.WeaponRotationSpeed * deltaTime
-
 			weaponCount := len(p.Weapons)
 			if weaponCount > 0 {
-				// 計算每個武器之間的角度差
 				angleDiff := 2 * math.Pi / float64(weaponCount)
-
-				// 為每個武器分配一個均勻分布的角度
 				for i, w := range p.Weapons {
-					// 計算武器的角度 (基準角度 + 武器的相對角度)
 					weaponAngle := p.WeaponRotationAngle + float64(i)*angleDiff
-					// 更新武器位置，使其圍繞玩家
 					updateWeaponPosition(p, w, weaponAngle, 30)
 				}
 			}
 		}
-		// Check for collisions between players
+
+		// --- Monster logic ---
+		// Spawn monsters if needed (1 monster per player)
+		if len(g.Monsters) < len(g.Players) {
+			for i := len(g.Monsters); i < len(g.Players); i++ {
+				g.spawnMonster(true) // Skip lock since we're already locked
+			}
+		}
+		g.updateMonsters(deltaTime)
+		g.checkMonsterCollisions(hub)
+		g.removeDeadMonstersAndDropPotions(true) // Skip lock since we're already locked
+
+		// --- Potion logic ---
+		g.checkPotionCollisions(hub)
+
+		// --- Player logic ---
 		g.checkCollisions(hub)
-		g.removeDeadPlayers(hub)
+		g.removeDeadPlayers()
 
 		playersCopy := make([]*Player, len(g.Players))
 		copy(playersCopy, g.Players)
+		monstersCopy := make([]*Monster, len(g.Monsters))
+		copy(monstersCopy, g.Monsters)
+		potionsCopy := make([]*HealingPotion, len(g.HealingPotions))
+		copy(potionsCopy, g.HealingPotions)
 		g.mu.Unlock()
 
-		// Send game state to clients
+		// Send game state to clients (now includes monsters and potions)
 		jsonData, err := json.Marshal(map[string]interface{}{
-			"type":    "gameState",
-			"players": playersCopy,
+			"type":     "gameState",
+			"players":  playersCopy,
+			"monsters": monstersCopy,
+			"potions":  potionsCopy,
 		})
 		if err != nil {
 			log.Println("error marshalling game info", err)
