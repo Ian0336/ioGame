@@ -13,6 +13,9 @@ window.onload = function () {
     var notifications = [];
     var lastHitEffectTime = 0;
     var isHitEffectActive = false;
+    var isLevelUpEffectActive = false;
+    var levelUpEffectTime = 0;
+    var rankingBoard = document.getElementById('rankingBoard');
     
     // Game boundary constants - should match server
     const GAME_MIN_X = 0;
@@ -61,10 +64,19 @@ window.onload = function () {
         ctx.fillStyle = 'red';
         ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2 - 10, (player.Health / 100) * player.Width, 5);
         
-        // 繪製玩家ID
+        // 繪製經驗條
+        ctx.fillStyle = 'black';
+        ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2 - 18, player.Width, 5);
+        ctx.fillStyle = 'purple';
+        // Experience bar based on level * 10 as max experience
+        const maxExp = player.Level * 10;
+        const expWidth = (player.Experience / maxExp) * player.Width;
+        ctx.fillRect(player.X - player.Width / 2, player.Y - player.Height / 2 - 18, expWidth, 5);
+        
+        // 繪製玩家ID、等級和經驗值
         ctx.fillStyle = 'white';
         ctx.font = '12px Arial';
-        ctx.fillText('Player ' + player.ID, player.X - player.Width / 2, player.Y - player.Height / 2 - 15);
+        ctx.fillText('Player ' + player.ID + ' (Lvl: ' + (player.Level || 1) + ' | Exp: ' + player.Experience + ')', player.X - player.Width / 2, player.Y - player.Height / 2 - 25);
     }
     
     // 繪製邊界
@@ -113,6 +125,59 @@ window.onload = function () {
                 isHitEffectActive = false;
             }
         }
+    }
+
+    // 顯示升級效果
+    function drawLevelUpEffect() {
+        if (isLevelUpEffectActive) {
+            // Draw a golden glow effect for level up
+            const elapsedTime = Date.now() - levelUpEffectTime;
+            const alpha = Math.max(0, 0.6 - (elapsedTime / 1000));
+            
+            if (alpha > 0) {
+                const gradient = ctx.createRadialGradient(
+                    canvas.width / 2, canvas.height / 2, 0,
+                    canvas.width / 2, canvas.height / 2, canvas.width / 2
+                );
+                gradient.addColorStop(0, 'rgba(255, 215, 0, ' + alpha + ')');
+                gradient.addColorStop(1, 'rgba(255, 215, 0, 0)');
+                
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Add some particles or stars for effect
+                if (elapsedTime < 1000) {
+                    drawLevelUpParticles(elapsedTime);
+                }
+            } else {
+                isLevelUpEffectActive = false;
+            }
+        }
+    }
+    
+    // 繪製升級粒子效果
+    function drawLevelUpParticles(elapsedTime) {
+        // Use elapsedTime to animate particles
+        const particleCount = 20;
+        const radius = Math.min(canvas.width, canvas.height) * 0.4;
+        
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        
+        for (let i = 0; i < particleCount; i++) {
+            const angle = (Math.PI * 2 / particleCount) * i;
+            const speed = 0.2;
+            const x = Math.cos(angle) * (radius + elapsedTime * speed);
+            const y = Math.sin(angle) * (radius + elapsedTime * speed);
+            
+            // Draw a star/particle
+            ctx.fillStyle = 'rgba(255, 255, 255, ' + (1 - elapsedTime / 1000) + ')';
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        ctx.restore();
     }
     
     // 顯示通知訊息
@@ -167,6 +232,23 @@ window.onload = function () {
         ctx.strokeStyle = '#003300';
         ctx.stroke();
     }
+
+    // Draw an experience orb
+    function drawExperience(exp) {
+        ctx.beginPath();
+        ctx.arc(exp.X, exp.Y, exp.Width / 2, 0, 2 * Math.PI);
+        ctx.fillStyle = 'purple';
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#6600cc';
+        ctx.stroke();
+        
+        // Optional: Add glow effect
+        ctx.beginPath();
+        ctx.arc(exp.X, exp.Y, exp.Width / 1.5, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(138, 43, 226, 0.2)';
+        ctx.fill();
+    }
     
     // 繪製遊戲畫面
     function drawGame() {
@@ -187,6 +269,13 @@ window.onload = function () {
         if (gameInfo.potions && gameInfo.potions.length > 0) {
             gameInfo.potions.forEach(function(potion) {
                 drawPotion(potion);
+            });
+        }
+
+        // Draw experience orbs
+        if (gameInfo.experiences && gameInfo.experiences.length > 0) {
+            gameInfo.experiences.forEach(function(exp) {
+                drawExperience(exp);
             });
         }
         
@@ -210,8 +299,49 @@ window.onload = function () {
         // Draw hit effect if active
         drawHitEffect();
         
+        // Draw level up effect if active
+        drawLevelUpEffect();
+        
         // Draw notifications
         drawNotifications();
+    }
+    
+    // 更新排行榜
+    function updateRankingBoard() {
+        if (!gameInfo.players || gameInfo.players.length === 0) {
+            rankingBoard.innerHTML = '<div class="ranking-title">Player Rankings</div><div class="no-players">No players in game</div>';
+            return;
+        }
+        
+        // Sort players by level (primary) and experience (secondary)
+        const sortedPlayers = [...gameInfo.players].sort((a, b) => {
+            const levelA = a.Level || 1;
+            const levelB = b.Level || 1;
+            
+            if (levelB !== levelA) {
+                return levelB - levelA; // Sort by level desc
+            }
+            return b.Experience - a.Experience; // Then by exp desc
+        });
+        
+        // Generate ranking HTML
+        let rankingHTML = '<div class="ranking-title">Player Rankings</div>';
+        
+        sortedPlayers.forEach((player, index) => {
+            const isCurrentPlayer = player.ID === playerID;
+            const playerClass = isCurrentPlayer ? 'ranking-player current-player' : 'ranking-player';
+            const level = player.Level || 1;
+            
+            rankingHTML += `
+                <div class="${playerClass}">
+                    <span class="rank">#${index + 1}</span>
+                    <span class="player-name">Player ${player.ID}</span>
+                    <span class="player-level">Level ${level}</span>
+                </div>
+            `;
+        });
+        
+        rankingBoard.innerHTML = rankingHTML;
     }
     
     // Add a notification
@@ -242,6 +372,22 @@ window.onload = function () {
         // Check if current player hit someone
         else if (playerID === data.from) {
             addNotification('You hit Player ' + data.to + ' for ' + data.damage + ' damage!', '#90EE90');
+        }
+    }
+
+    // Handle level up notification
+    function handleLevelUp(data) {
+        if (playerID === data.playerID) {
+            // Activate level up effect
+            isLevelUpEffectActive = true;
+            levelUpEffectTime = Date.now();
+            
+            // Add a special notification for level up
+            addNotification('⭐ LEVEL UP! ⭐ You reached Level ' + data.level, '#FFD700');
+            
+            // Maybe play a sound effect here
+            // const levelUpSound = new Audio('levelup.mp3');
+            // levelUpSound.play();
         }
     }
 
@@ -293,6 +439,7 @@ window.onload = function () {
                 
             case "gameState":
                 gameInfo = message;
+                updateRankingBoard(); // Update ranking when game state changes
                 break;
             
             case "playerHit":
@@ -309,6 +456,14 @@ window.onload = function () {
                 
             case "potionCollected":
                 handlePotionCollected(message);
+                break;
+
+            case "experienceCollected":
+                handleExperienceCollected(message);
+                break;
+                
+            case "levelUp":
+                handleLevelUp(message);
                 break;
                 
             default:
@@ -421,7 +576,7 @@ window.onload = function () {
         // If current player hit a monster
         if (playerID === data.playerID) {
             if (data.status === "killed") {
-                addNotification('You killed a monster! A healing potion dropped.', '#FFA500');
+                addNotification('You killed a monster!', '#FFA500');
             } else {
                 addNotification('You hit a monster for ' + data.damage + ' damage!', '#FFFF00');
             }
@@ -433,6 +588,14 @@ window.onload = function () {
         // If current player collected a potion
         if (playerID === data.playerID) {
             addNotification('You collected a healing potion! +' + data.healedAmount + ' HP', '#32CD32');
+        }
+    }
+
+    // Handle experience collection
+    function handleExperienceCollected(data) {
+        // If current player collected experience
+        if (playerID === data.playerID) {
+            addNotification('Experience gained: +' + data.amount + ' EXP (Total: ' + data.totalExperience + ')', '#8A2BE2');
         }
     }
 };
@@ -476,10 +639,66 @@ html, body {
 #joinBtn:hover {
     background-color: #45a049;
 }
+
+#rankingBoard {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 200px;
+    background-color: rgba(0, 0, 0, 0.7);
+    border-radius: 5px;
+    padding: 10px;
+    color: white;
+    font-size: 14px;
+    z-index: 100;
+}
+
+.ranking-title {
+    font-size: 16px;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #555;
+    padding-bottom: 5px;
+}
+
+.ranking-player {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    border-bottom: 1px solid #444;
+}
+
+.current-player {
+    background-color: rgba(0, 191, 255, 0.3);
+    border-radius: 3px;
+}
+
+.rank {
+    font-weight: bold;
+    width: 30px;
+}
+
+.player-name {
+    flex-grow: 1;
+}
+
+.player-level {
+    font-weight: bold;
+    color: #FFD700;
+}
+
+.no-players {
+    text-align: center;
+    color: #999;
+    font-style: italic;
+    padding: 5px 0;
+}
 </style>
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
 <button id="joinBtn">Join Game</button>
+<div id="rankingBoard"></div>
 </body>
 </html>

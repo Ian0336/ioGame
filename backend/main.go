@@ -11,8 +11,8 @@ import (
 	"net/http"
 )
 
-// 設定服務器監聽的地址，預設為 ":8080"
-var addr = flag.String("addr", ":8080", "http service address")
+// 設定服務器監聽的地址，預設為 ":30604"
+var addr = flag.String("addr", ":30604", "http service address")
 
 // serveHome 處理首頁請求
 // 如果訪問的不是根路徑 "/"，返回 404 錯誤

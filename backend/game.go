@@ -96,6 +96,18 @@ func (h *HealthComponent) TakeDamage(damage int) {
 	}
 }
 
+// Heal increases health by the given amount
+// returns the real healed amount
+func (h *HealthComponent) Heal(amount int) int {
+	oldHealth := h.Health
+	h.Health += amount
+	if h.Health > h.MaxHealth {
+		h.Health = h.MaxHealth
+		return h.MaxHealth - oldHealth
+	}
+	return amount
+}
+
 // IsDead returns true if health is 0 or less
 func (h *HealthComponent) IsDead() bool {
 	return h.Health <= 0
@@ -109,6 +121,12 @@ func (h *HealthComponent) CheckHitCooldown(weaponID int) bool {
 		return true
 	}
 	return false
+}
+
+// ExperienceComponent for entities that can gain experience
+type ExperienceComponent struct {
+	Experience int
+	Level      int
 }
 
 // Movement component for entities that move
@@ -127,6 +145,8 @@ type Player struct {
 	Entity
 	HealthComponent
 	MovementComponent
+	ExperienceComponent
+	AttackComponent
 	WeaponRotationAngle float64
 	WeaponRotationSpeed float64
 	Weapons             []*Weapon
@@ -170,8 +190,7 @@ func (p *Player) CollectItem(item *Item) {
 // Weapon represents a player's weapon
 type Weapon struct {
 	Entity
-	OwnerID int
-	AttackComponent
+	OwnerID       int
 	RotationAngle float64
 }
 
@@ -231,25 +250,66 @@ type HealingPotion struct {
 // OnCollect handles what happens when the potion is collected
 func (h *HealingPotion) OnCollect(collector ItemCollector) {
 	if player, ok := collector.(*Player); ok {
-		oldHealth := player.Health
-		player.Health += h.Amount
-		if player.Health > player.MaxHealth {
-			player.Health = player.MaxHealth
+		if player.Client == nil {
+			return
 		}
+		healedAmount := player.Heal(h.Amount)
 
 		// Notify player about potion collection if possible
-		if player.Client != nil {
-			potionNotification, err := json.Marshal(map[string]interface{}{
-				"type":         "potionCollected",
-				"playerID":     player.ID,
-				"potionID":     h.ID,
-				"amount":       h.Amount,
-				"healedAmount": player.Health - oldHealth,
-				"newHealth":    player.Health,
+		potionNotification, err := json.Marshal(map[string]interface{}{
+			"type":         "potionCollected",
+			"playerID":     player.ID,
+			"potionID":     h.ID,
+			"amount":       h.Amount,
+			"healedAmount": healedAmount,
+			"newHealth":    player.Health,
+		})
+		if err == nil {
+			player.Client.send <- potionNotification
+		}
+	}
+}
+
+// Experience represents experience points that can be collected
+type Experience struct {
+	Entity
+	Amount int
+}
+
+// OnCollect handles what happens when experience is collected
+func (e *Experience) OnCollect(collector ItemCollector) {
+	if player, ok := collector.(*Player); ok {
+		if player.Client == nil {
+			return
+		}
+		player.Experience += e.Amount
+		if player.Experience >= player.Level*10 {
+			player.Level++
+			player.Damage++
+			player.MaxHealth += 10
+			player.Health = player.MaxHealth
+			player.Experience = 0
+			levelUpNotification, err := json.Marshal(map[string]interface{}{
+				"type":     "levelUp",
+				"playerID": player.ID,
+				"level":    player.Level,
 			})
 			if err == nil {
-				player.Client.send <- potionNotification
+				player.Client.send <- levelUpNotification
 			}
+		}
+
+		// Notify player about experience collection if possible
+
+		expNotification, err := json.Marshal(map[string]interface{}{
+			"type":            "experienceCollected",
+			"playerID":        player.ID,
+			"experienceID":    e.ID,
+			"amount":          e.Amount,
+			"totalExperience": player.Experience,
+		})
+		if err == nil {
+			player.Client.send <- expNotification
 		}
 	}
 }
@@ -259,6 +319,7 @@ type Game struct {
 	Players        []*Player
 	Monsters       []*Monster
 	HealingPotions []*HealingPotion
+	Experiences    []*Experience
 	mu             sync.Mutex
 	usedIDs        map[string]map[int]bool // Tracks used IDs by type (player, monster, potion)
 }
@@ -269,12 +330,14 @@ func newGame() *Game {
 		Players:        []*Player{},
 		Monsters:       []*Monster{},
 		HealingPotions: []*HealingPotion{},
+		Experiences:    []*Experience{},
 		usedIDs:        make(map[string]map[int]bool),
 	}
 	g.usedIDs["player"] = make(map[int]bool)
 	g.usedIDs["monster"] = make(map[int]bool)
 	g.usedIDs["potion"] = make(map[int]bool)
 	g.usedIDs["weapon"] = make(map[int]bool)
+	g.usedIDs["experience"] = make(map[int]bool)
 	return g
 }
 
@@ -316,9 +379,16 @@ func (g *Game) addNewPlayer(client *Client) *Player {
 			MaxHealth:   100,
 			lastHitById: make(map[int]time.Time),
 		},
+		ExperienceComponent: ExperienceComponent{
+			Experience: 0,
+			Level:      1,
+		},
 		MovementComponent: MovementComponent{
 			Speed:     100,
 			Direction: 0,
+		},
+		AttackComponent: AttackComponent{
+			Damage: 10,
 		},
 		WeaponRotationAngle: 0,
 		WeaponRotationSpeed: 1,
@@ -349,9 +419,6 @@ func (g *Game) newWeapon(owner *Player) *Weapon {
 			Height: 20,
 		},
 		OwnerID: owner.ID,
-		AttackComponent: AttackComponent{
-			Damage: 10,
-		},
 	}
 }
 
@@ -411,6 +478,33 @@ func (g *Game) spawnHealingPotion(x, y float64, skipLock bool) *HealingPotion {
 	return potion
 }
 
+// spawnExperience creates and adds experience points to the game
+func (g *Game) spawnExperience(x, y float64, amount int, skipLock bool) *Experience {
+	if !skipLock {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+	}
+
+	id := g.generateID("experience")
+
+	// Random offset from the origin point (where the entity died)
+	offsetX := (rand.Float64() - 0.5) * 30
+	offsetY := (rand.Float64() - 0.5) * 30
+
+	exp := &Experience{
+		Entity: Entity{
+			ID:     id,
+			X:      x + offsetX,
+			Y:      y + offsetY,
+			Width:  8,
+			Height: 8,
+		},
+		Amount: amount,
+	}
+	g.Experiences = append(g.Experiences, exp)
+	return exp
+}
+
 // removePlayer removes a player from the game
 func (g *Game) removePlayer(playerID int, skipLock bool) {
 	if !skipLock {
@@ -451,6 +545,7 @@ func (cs *CollisionSystem) Update() {
 	cs.checkWeaponCollisions()
 	cs.checkMonsterPlayerCollisions()
 	cs.checkPlayerPotionCollisions()
+	cs.checkPlayerExperienceCollisions()
 }
 
 // checkWeaponCollisions handles weapon-to-player collisions and weapon-to-monster collisions
@@ -467,14 +562,14 @@ func (cs *CollisionSystem) checkWeaponCollisions() {
 					// Check cooldown
 					weaponID := w.ID
 					if other.CheckHitCooldown(weaponID) {
-						other.TakeDamage(w.Damage)
+						other.TakeDamage(p.Damage)
 
 						// Create hit notification
 						hitNotification, err := json.Marshal(map[string]interface{}{
 							"type":            "playerHit",
 							"from":            w.OwnerID,
 							"to":              other.ID,
-							"damage":          w.Damage,
+							"damage":          p.Damage,
 							"remainingHealth": other.Health,
 						})
 						if err == nil {
@@ -494,7 +589,7 @@ func (cs *CollisionSystem) checkWeaponCollisions() {
 						continue
 					}
 					// Apply damage
-					m.TakeDamage(w.Damage)
+					m.TakeDamage(p.Damage)
 
 					// Only notify client if it exists
 					if p.Client != nil {
@@ -509,7 +604,7 @@ func (cs *CollisionSystem) checkWeaponCollisions() {
 							"type":          "monsterHit",
 							"playerID":      p.ID,
 							"monsterID":     m.ID,
-							"damage":        w.Damage,
+							"damage":        p.Damage,
 							"monsterHealth": m.Health,
 							"status":        status,
 						})
@@ -559,26 +654,7 @@ func (cs *CollisionSystem) checkPlayerPotionCollisions() {
 		collected := false
 		for _, p := range cs.game.Players {
 			if potion.CheckCollision(p.GetEntity()) {
-				oldHealth := p.Health
-				p.Health += potion.Amount
-				if p.Health > p.MaxHealth {
-					p.Health = p.MaxHealth
-				}
-
-				// Notify player about potion collection
-				if p.Client != nil {
-					potionNotification, err := json.Marshal(map[string]interface{}{
-						"type":         "potionCollected",
-						"playerID":     p.ID,
-						"potionID":     potion.ID,
-						"amount":       potion.Amount,
-						"healedAmount": p.Health - oldHealth,
-						"newHealth":    p.Health,
-					})
-					if err == nil {
-						p.Client.send <- potionNotification
-					}
-				}
+				potion.OnCollect(p)
 
 				cs.game.releaseID("potion", potion.ID)
 				collected = true
@@ -590,6 +666,28 @@ func (cs *CollisionSystem) checkPlayerPotionCollisions() {
 		}
 	}
 	cs.game.HealingPotions = remainingPotions
+}
+
+// checkPlayerExperienceCollisions handles player-to-experience collisions
+func (cs *CollisionSystem) checkPlayerExperienceCollisions() {
+	remainingExperiences := []*Experience{}
+	for _, exp := range cs.game.Experiences {
+		collected := false
+		for _, p := range cs.game.Players {
+			if exp.CheckCollision(p.GetEntity()) {
+				// Add experience to player
+				exp.OnCollect(p)
+
+				cs.game.releaseID("experience", exp.ID)
+				collected = true
+				break
+			}
+		}
+		if !collected {
+			remainingExperiences = append(remainingExperiences, exp)
+		}
+	}
+	cs.game.Experiences = remainingExperiences
 }
 
 // MonsterSystem handles monster spawning, updates, and cleanup
@@ -627,6 +725,15 @@ func (ms *MonsterSystem) removeDeadMonsters() {
 			if rand.Float64() < m.DropRate {
 				ms.game.spawnHealingPotion(m.X, m.Y, true)
 			}
+
+			// Spawn experience points
+			expAmount := 10 + rand.Intn(10) // 10-19 experience points
+			numExpOrbs := 3 + rand.Intn(3)  // 3-5 experience orbs
+
+			for i := 0; i < numExpOrbs; i++ {
+				ms.game.spawnExperience(m.X, m.Y, expAmount/numExpOrbs, true)
+			}
+
 			ms.game.releaseID("monster", m.ID)
 			continue
 		}
@@ -652,6 +759,11 @@ func (ps *PlayerSystem) Update(deltaTime float64) {
 	for _, p := range ps.game.Players {
 		// Update player position
 		p.Move(deltaTime)
+
+		// Update player damage and max health with experience
+		p.Damage = p.Damage + p.Experience/100
+		p.MaxHealth = p.MaxHealth + p.Experience/100
+		log.Printf("Player %d has %d damage and %d max health", p.Experience, p.Damage, p.MaxHealth)
 
 		// Update weapon rotation
 		p.WeaponRotationAngle += p.WeaponRotationSpeed * deltaTime
@@ -695,6 +807,16 @@ func (ps *PlayerSystem) removeDeadPlayers() {
 				}
 			}
 
+			// Spawn experience when player dies (half of their current experience)
+			if p.Experience > 0 {
+				expAmount := p.Experience / 2
+				numExpOrbs := 4 + rand.Intn(4) // 4-7 experience orbs
+
+				for i := 0; i < numExpOrbs; i++ {
+					ps.game.spawnExperience(p.X, p.Y, expAmount/numExpOrbs, true)
+				}
+			}
+
 			// Remove the player
 			ps.game.removePlayer(p.ID, true)
 		}
@@ -727,15 +849,18 @@ func (g *Game) run(fps int, hub *Hub) {
 		copy(monstersCopy, g.Monsters)
 		potionsCopy := make([]*HealingPotion, len(g.HealingPotions))
 		copy(potionsCopy, g.HealingPotions)
+		experiencesCopy := make([]*Experience, len(g.Experiences))
+		copy(experiencesCopy, g.Experiences)
 
 		g.mu.Unlock()
 
 		// Send game state to clients
 		jsonData, err := json.Marshal(map[string]interface{}{
-			"type":     "gameState",
-			"players":  playersCopy,
-			"monsters": monstersCopy,
-			"potions":  potionsCopy,
+			"type":        "gameState",
+			"players":     playersCopy,
+			"monsters":    monstersCopy,
+			"potions":     potionsCopy,
+			"experiences": experiencesCopy,
 		})
 		if err != nil {
 			log.Println("error marshalling game info", err)
